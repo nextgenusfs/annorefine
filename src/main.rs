@@ -1,17 +1,16 @@
-use clap::Parser;
 use anyhow::Result;
+use clap::Parser;
 use log::info;
 use std::path::PathBuf;
 
-
 use annorefine::{
-    fasta::{parse_fasta_file, get_sequence_stats},
-    gff3::parse_gff3_file,
     bam::get_alignment_stats,
-    refinement::RefinementEngine,
-    output::{validate_gene_models, Gff3Writer},
-    types::RefinementConfig,
+    fasta::{get_sequence_stats, parse_fasta_file},
+    gff3::parse_gff3_file,
     logging::init_logger,
+    output::{validate_gene_models, Gff3Writer},
+    refinement::RefinementEngine,
+    types::RefinementConfig,
 };
 
 /// AnnoRefine: Genome annotation refinement using RNA-seq data
@@ -97,7 +96,10 @@ fn main() -> Result<()> {
         info!("Using {} threads for parallel processing", threads);
     } else {
         let num_cpus = rayon::current_num_threads();
-        info!("Using {} threads for parallel processing (auto-detected)", num_cpus);
+        info!(
+            "Using {} threads for parallel processing (auto-detected)",
+            num_cpus
+        );
     }
 
     info!("Starting AnnoRefine v2025.1.0");
@@ -165,7 +167,8 @@ fn run_refinement_pipeline(args: &Args) -> Result<()> {
     info!("Step 4: Refining gene models");
     info!("Using BAM file: {}", args.bam_file.display());
     let refinement_engine = RefinementEngine::new(config);
-    let refinement_summary = refinement_engine.refine_gene_models(&mut gene_models, &args.bam_file, &genome)?;
+    let refinement_summary =
+        refinement_engine.refine_gene_models(&mut gene_models, &args.bam_file, &genome)?;
     info!("Refinement complete: {}", refinement_summary);
 
     // 7. Validate refined gene models

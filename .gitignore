@@ -34,3 +34,5 @@ Thumbs.db
 # Local test files
 test_output.gff3
 test_interrupt_output.gff3
+test_fixes.py
+test_interrupt.py

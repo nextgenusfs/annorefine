@@ -1,11 +1,11 @@
 //! Custom logging setup for AnnoRefine
 
+use colored::*;
 use log::{Level, LevelFilter, Metadata, Record};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 use std::sync::Mutex;
-use colored::*;
 
 /// Custom logger that handles both console and file output
 pub struct AnnoRefineLogger {
@@ -16,9 +16,9 @@ pub struct AnnoRefineLogger {
 impl AnnoRefineLogger {
     pub fn new(verbose: bool, log_file: Option<&Path>) -> Result<Self, std::io::Error> {
         let console_level = if verbose {
-            LevelFilter::Debug  // Show all: ERROR, WARN, INFO, DEBUG
+            LevelFilter::Debug // Show all: ERROR, WARN, INFO, DEBUG
         } else {
-            LevelFilter::Info   // Show only: ERROR, INFO (no WARN, no DEBUG)
+            LevelFilter::Info // Show only: ERROR, INFO (no WARN, no DEBUG)
         };
 
         let file_writer = if let Some(log_path) = log_file {
@@ -64,7 +64,8 @@ impl log::Log for AnnoRefineLogger {
             Level::Trace => "TRACE".purple().bold(),
         };
 
-        let colored_message = format!("[{} {} {}] {}",
+        let colored_message = format!(
+            "[{} {} {}] {}",
             timestamp.to_string().dimmed(),
             colored_level,
             target.cyan(),
@@ -160,12 +161,7 @@ pub fn log_refinement_stats(
 }
 
 /// Log CDS validation results
-pub fn log_cds_validation(
-    gene_id: &str,
-    transcript_id: &str,
-    is_valid: bool,
-    issues: &[String],
-) {
+pub fn log_cds_validation(gene_id: &str, transcript_id: &str, is_valid: bool, issues: &[String]) {
     if is_valid {
         log::debug!(
             target: "annorefine::cds",
@@ -215,7 +211,12 @@ pub fn log_splice_junction_refinement(
         "SPLICE_JUNCTION_REFINEMENT",
         &format!(
             "Exon{}: donor {}→{}, acceptor {}→{} (support={})",
-            exon_index + 1, original_donor, new_donor, original_acceptor, new_acceptor, support_count
+            exon_index + 1,
+            original_donor,
+            new_donor,
+            original_acceptor,
+            new_acceptor,
+            support_count
         ),
     );
 }

@@ -1,11 +1,13 @@
 //! Output generation for refined gene models
 
-use crate::types::{GeneModel, Transcript, Exon, CdsRegion, FeatureType, Strand, AnnoRefineError, Result};
-use std::path::Path;
-use std::fs::File;
-use std::io::{Write, BufWriter};
+use crate::types::{
+    AnnoRefineError, CdsRegion, Exon, FeatureType, GeneModel, Result, Strand, Transcript,
+};
+use log::{debug, info};
 use std::collections::HashMap;
-use log::{info, debug};
+use std::fs::File;
+use std::io::{BufWriter, Write};
+use std::path::Path;
 
 /// GFF3 writer for outputting refined gene models
 pub struct Gff3Writer {
@@ -17,19 +19,18 @@ impl Gff3Writer {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
         info!("Creating GFF3 output file: {}", path.display());
-        
-        let file = File::create(path)
-            .map_err(|e| AnnoRefineError::Io(e))?;
-        
+
+        let file = File::create(path).map_err(|e| AnnoRefineError::Io(e))?;
+
         let mut writer = BufWriter::new(file);
-        
+
         // Write GFF3 header
         writeln!(writer, "##gff-version 3")?;
         writeln!(writer, "##generated-by annorefine v2025.1.0")?;
-        
+
         Ok(Gff3Writer { writer })
     }
-    
+
     /// Write gene models to the GFF3 file
     pub fn write_gene_models(&mut self, gene_models: &[GeneModel]) -> Result<()> {
         info!("Writing {} gene models to GFF3", gene_models.len());
@@ -47,7 +48,10 @@ impl Gff3Writer {
             }
         });
 
-        debug!("Sorted {} gene models by chromosome and position", sorted_genes.len());
+        debug!(
+            "Sorted {} gene models by chromosome and position",
+            sorted_genes.len()
+        );
 
         for gene_model in &sorted_genes {
             self.write_gene_model(gene_model)?;
@@ -58,22 +62,22 @@ impl Gff3Writer {
 
         Ok(())
     }
-    
+
     /// Write a single gene model
     fn write_gene_model(&mut self, gene_model: &GeneModel) -> Result<()> {
         debug!("Writing gene: {}", gene_model.id);
-        
+
         // Write gene feature
         self.write_gene_feature(gene_model)?;
-        
+
         // Write transcripts
         for transcript in &gene_model.transcripts {
             self.write_transcript(transcript, gene_model)?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Write gene feature
     fn write_gene_feature(&mut self, gene_model: &GeneModel) -> Result<()> {
         // Start with original attributes and update key ones
@@ -92,12 +96,15 @@ impl Gff3Writer {
 
             for transcript in &gene_model.transcripts {
                 // Calculate current CDS length
-                let current_cds_length: u64 = transcript.cds_regions.iter()
+                let current_cds_length: u64 = transcript
+                    .cds_regions
+                    .iter()
                     .map(|cds| cds.end - cds.start)
                     .sum();
 
                 // Get original CDS length
-                let original_cds_length = gene_model.original_cds_lengths
+                let original_cds_length = gene_model
+                    .original_cds_lengths
                     .get(&transcript.id)
                     .copied()
                     .unwrap_or(0);
@@ -107,14 +114,20 @@ impl Gff3Writer {
                     let current_protein_length = current_cds_length / 3;
 
                     if original_cds_length != current_cds_length {
-                        change_details.push(format!("{}:{}bp/{}aa→{}bp/{}aa",
+                        change_details.push(format!(
+                            "{}:{}bp/{}aa→{}bp/{}aa",
                             transcript.id,
-                            original_cds_length, original_protein_length,
-                            current_cds_length, current_protein_length));
+                            original_cds_length,
+                            original_protein_length,
+                            current_cds_length,
+                            current_protein_length
+                        ));
                     } else {
                         // Structure changed but CDS length stayed the same
-                        change_details.push(format!("{}:{}bp/{}aa(structure_modified)",
-                            transcript.id, current_cds_length, current_protein_length));
+                        change_details.push(format!(
+                            "{}:{}bp/{}aa(structure_modified)",
+                            transcript.id, current_cds_length, current_protein_length
+                        ));
                     }
                 }
             }
@@ -137,7 +150,10 @@ impl Gff3Writer {
             }
 
             // Also add a specific refinement flag
-            attributes.insert("annorefine_structural_changes".to_string(), vec!["true".to_string()]);
+            attributes.insert(
+                "annorefine_structural_changes".to_string(),
+                vec!["true".to_string()],
+            );
         }
 
         self.write_feature(
@@ -154,11 +170,11 @@ impl Gff3Writer {
 
         Ok(())
     }
-    
+
     /// Write transcript and its features
     fn write_transcript(&mut self, transcript: &Transcript, gene_model: &GeneModel) -> Result<()> {
         debug!("Writing transcript: {}", transcript.id);
-        
+
         // Write mRNA feature - start with original attributes
         let mut mrna_attributes = transcript.original_attributes.clone();
 
@@ -173,11 +189,14 @@ impl Gff3Writer {
         // Add warning note if gene has structural changes
         if gene_model.has_structural_changes {
             // Calculate CDS change for this specific transcript
-            let current_cds_length: u64 = transcript.cds_regions.iter()
+            let current_cds_length: u64 = transcript
+                .cds_regions
+                .iter()
                 .map(|cds| cds.end - cds.start)
                 .sum();
 
-            let original_cds_length = gene_model.original_cds_lengths
+            let original_cds_length = gene_model
+                .original_cds_lengths
                 .get(&transcript.id)
                 .copied()
                 .unwrap_or(0);
@@ -206,7 +225,7 @@ impl Gff3Writer {
                 }
             }
         }
-        
+
         self.write_feature(
             &gene_model.chromosome,
             "annorefine",
@@ -218,23 +237,23 @@ impl Gff3Writer {
             None,
             &mrna_attributes,
         )?;
-        
+
         // Write exons
         for (i, exon) in transcript.exons.iter().enumerate() {
             self.write_exon(exon, transcript, gene_model, i)?;
         }
-        
+
         // Write CDS regions
         for (i, cds) in transcript.cds_regions.iter().enumerate() {
             self.write_cds(cds, transcript, gene_model, i)?;
         }
-        
+
         // Write UTRs if present
         self.write_utrs(transcript, gene_model)?;
-        
+
         Ok(())
     }
-    
+
     /// Write exon feature
     fn write_exon(
         &mut self,
@@ -244,16 +263,16 @@ impl Gff3Writer {
         index: usize,
     ) -> Result<()> {
         let mut attributes = HashMap::new();
-        
+
         let exon_id = if let Some(id) = &exon.id {
             id.clone()
         } else {
             format!("{}.exon{}", transcript.id, index + 1)
         };
-        
+
         attributes.insert("ID".to_string(), vec![exon_id]);
         attributes.insert("Parent".to_string(), vec![transcript.id.clone()]);
-        
+
         self.write_feature(
             &gene_model.chromosome,
             "annorefine",
@@ -265,10 +284,10 @@ impl Gff3Writer {
             None,
             &attributes,
         )?;
-        
+
         Ok(())
     }
-    
+
     /// Write CDS feature
     fn write_cds(
         &mut self,
@@ -278,16 +297,16 @@ impl Gff3Writer {
         index: usize,
     ) -> Result<()> {
         let mut attributes = HashMap::new();
-        
+
         let cds_id = if let Some(id) = &cds.id {
             id.clone()
         } else {
             format!("{}.cds{}", transcript.id, index + 1)
         };
-        
+
         attributes.insert("ID".to_string(), vec![cds_id]);
         attributes.insert("Parent".to_string(), vec![transcript.id.clone()]);
-        
+
         self.write_feature(
             &gene_model.chromosome,
             "annorefine",
@@ -299,19 +318,22 @@ impl Gff3Writer {
             cds.phase,
             &attributes,
         )?;
-        
+
         Ok(())
     }
-    
+
     /// Write UTR features
     fn write_utrs(&mut self, transcript: &Transcript, _gene_model: &GeneModel) -> Result<()> {
         // Write 5' UTR
         if let Some(five_prime_utrs) = &transcript.five_prime_utr {
             for (i, utr_region) in five_prime_utrs.iter().enumerate() {
                 let mut attributes = HashMap::new();
-                attributes.insert("ID".to_string(), vec![format!("{}.5utr{}", transcript.id, i + 1)]);
+                attributes.insert(
+                    "ID".to_string(),
+                    vec![format!("{}.5utr{}", transcript.id, i + 1)],
+                );
                 attributes.insert("Parent".to_string(), vec![transcript.id.clone()]);
-                
+
                 self.write_feature(
                     &utr_region.chromosome,
                     "annorefine",
@@ -325,14 +347,17 @@ impl Gff3Writer {
                 )?;
             }
         }
-        
+
         // Write 3' UTR
         if let Some(three_prime_utrs) = &transcript.three_prime_utr {
             for (i, utr_region) in three_prime_utrs.iter().enumerate() {
                 let mut attributes = HashMap::new();
-                attributes.insert("ID".to_string(), vec![format!("{}.3utr{}", transcript.id, i + 1)]);
+                attributes.insert(
+                    "ID".to_string(),
+                    vec![format!("{}.3utr{}", transcript.id, i + 1)],
+                );
                 attributes.insert("Parent".to_string(), vec![transcript.id.clone()]);
-                
+
                 self.write_feature(
                     &utr_region.chromosome,
                     "annorefine",
@@ -346,10 +371,10 @@ impl Gff3Writer {
                 )?;
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Write a generic GFF3 feature
     fn write_feature(
         &mut self,
@@ -367,28 +392,20 @@ impl Gff3Writer {
             Some(s) => format!("{:.3}", s),
             None => ".".to_string(),
         };
-        
+
         let phase_str = match phase {
             Some(p) => p.to_string(),
             None => ".".to_string(),
         };
-        
+
         let attributes_str = format_attributes(attributes);
-        
+
         writeln!(
             self.writer,
             "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-            seqid,
-            source,
-            feature_type,
-            start,
-            end,
-            score_str,
-            strand,
-            phase_str,
-            attributes_str
+            seqid, source, feature_type, start, end, score_str, strand, phase_str, attributes_str
         )?;
-        
+
         Ok(())
     }
 }
@@ -398,36 +415,34 @@ fn format_attributes(attributes: &HashMap<String, Vec<String>>) -> String {
     if attributes.is_empty() {
         return ".".to_string();
     }
-    
+
     let mut attr_strings = Vec::new();
-    
+
     // Ensure ID comes first if present
     if let Some(id_values) = attributes.get("ID") {
         attr_strings.push(format!("ID={}", id_values.join(",")));
     }
-    
+
     // Add other attributes in alphabetical order
-    let mut other_keys: Vec<_> = attributes.keys()
-        .filter(|k| *k != "ID")
-        .collect();
+    let mut other_keys: Vec<_> = attributes.keys().filter(|k| *k != "ID").collect();
     other_keys.sort();
-    
+
     for key in other_keys {
         let values = &attributes[key];
         attr_strings.push(format!("{}={}", key, values.join(",")));
     }
-    
+
     attr_strings.join(";")
 }
 
 /// Validate gene models before output
 pub fn validate_gene_models(gene_models: &[GeneModel]) -> Result<()> {
     info!("Validating {} gene models", gene_models.len());
-    
+
     for gene_model in gene_models {
         validate_gene_model(gene_model)?;
     }
-    
+
     info!("All gene models passed validation");
     Ok(())
 }
@@ -436,24 +451,25 @@ pub fn validate_gene_models(gene_models: &[GeneModel]) -> Result<()> {
 fn validate_gene_model(gene_model: &GeneModel) -> Result<()> {
     // Check that gene has at least one transcript
     if gene_model.transcripts.is_empty() {
-        return Err(AnnoRefineError::InvalidGeneModel(
-            format!("Gene {} has no transcripts", gene_model.id)
-        ));
+        return Err(AnnoRefineError::InvalidGeneModel(format!(
+            "Gene {} has no transcripts",
+            gene_model.id
+        )));
     }
-    
+
     // Check gene boundaries
     if gene_model.start >= gene_model.end {
-        return Err(AnnoRefineError::InvalidGeneModel(
-            format!("Gene {} has invalid coordinates: {}-{}", 
-                gene_model.id, gene_model.start, gene_model.end)
-        ));
+        return Err(AnnoRefineError::InvalidGeneModel(format!(
+            "Gene {} has invalid coordinates: {}-{}",
+            gene_model.id, gene_model.start, gene_model.end
+        )));
     }
-    
+
     // Validate each transcript
     for transcript in &gene_model.transcripts {
         validate_transcript(transcript, gene_model)?;
     }
-    
+
     Ok(())
 }
 
@@ -461,41 +477,48 @@ fn validate_gene_model(gene_model: &GeneModel) -> Result<()> {
 fn validate_transcript(transcript: &Transcript, gene_model: &GeneModel) -> Result<()> {
     // Check that transcript has at least one exon
     if transcript.exons.is_empty() {
-        return Err(AnnoRefineError::InvalidGeneModel(
-            format!("Transcript {} has no exons", transcript.id)
-        ));
+        return Err(AnnoRefineError::InvalidGeneModel(format!(
+            "Transcript {} has no exons",
+            transcript.id
+        )));
     }
-    
+
     // Check transcript boundaries
     if transcript.start >= transcript.end {
-        return Err(AnnoRefineError::InvalidGeneModel(
-            format!("Transcript {} has invalid coordinates: {}-{}", 
-                transcript.id, transcript.start, transcript.end)
-        ));
+        return Err(AnnoRefineError::InvalidGeneModel(format!(
+            "Transcript {} has invalid coordinates: {}-{}",
+            transcript.id, transcript.start, transcript.end
+        )));
     }
-    
+
     // Check that transcript is within gene boundaries
     if transcript.start < gene_model.start || transcript.end > gene_model.end {
-        return Err(AnnoRefineError::InvalidGeneModel(
-            format!("Transcript {} extends beyond gene {} boundaries", 
-                transcript.id, gene_model.id)
-        ));
+        return Err(AnnoRefineError::InvalidGeneModel(format!(
+            "Transcript {} extends beyond gene {} boundaries",
+            transcript.id, gene_model.id
+        )));
     }
-    
+
     // Validate exons
     for (i, exon) in transcript.exons.iter().enumerate() {
         if exon.start >= exon.end {
-            return Err(AnnoRefineError::InvalidGeneModel(
-                format!("Exon {} in transcript {} (gene {}) has invalid coordinates: {}-{}",
-                    i + 1, transcript.id, gene_model.id, exon.start, exon.end)
-            ));
+            return Err(AnnoRefineError::InvalidGeneModel(format!(
+                "Exon {} in transcript {} (gene {}) has invalid coordinates: {}-{}",
+                i + 1,
+                transcript.id,
+                gene_model.id,
+                exon.start,
+                exon.end
+            )));
         }
 
         if exon.start == 0 {
-            return Err(AnnoRefineError::InvalidGeneModel(
-                format!("Exon {} in transcript {} (gene {}) has zero start coordinate",
-                    i + 1, transcript.id, gene_model.id)
-            ));
+            return Err(AnnoRefineError::InvalidGeneModel(format!(
+                "Exon {} in transcript {} (gene {}) has zero start coordinate",
+                i + 1,
+                transcript.id,
+                gene_model.id
+            )));
         }
 
         // Check that exons don't overlap (except for alternative splicing)
@@ -509,7 +532,7 @@ fn validate_transcript(transcript: &Transcript, gene_model: &GeneModel) -> Resul
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -535,7 +558,7 @@ fn compare_chromosome_names(a: &str, b: &str) -> std::cmp::Ordering {
             } else if last_digit_start.is_some() {
                 // Found the start of the prefix
                 let prefix = chars[..=i].iter().collect::<String>();
-                let number_str = chars[i+1..].iter().collect::<String>();
+                let number_str = chars[i + 1..].iter().collect::<String>();
                 if let Ok(number) = number_str.parse::<u64>() {
                     return (prefix, Some(number));
                 }
@@ -573,9 +596,9 @@ fn compare_chromosome_names(a: &str, b: &str) -> std::cmp::Ordering {
             // Prefixes are the same, compare numbers
             match (num_a, num_b) {
                 (Some(n_a), Some(n_b)) => n_a.cmp(&n_b),
-                (Some(_), None) => std::cmp::Ordering::Less,    // Numbers come before non-numbers
+                (Some(_), None) => std::cmp::Ordering::Less, // Numbers come before non-numbers
                 (None, Some(_)) => std::cmp::Ordering::Greater, // Numbers come before non-numbers
-                (None, None) => std::cmp::Ordering::Equal,      // Both have no numbers
+                (None, None) => std::cmp::Ordering::Equal,   // Both have no numbers
             }
         }
         other => other,

@@ -1,17 +1,16 @@
 //! Gene model refinement using RNA-seq evidence
 
-use crate::types::{
-    GeneModel, Transcript, GenomicInterval, SpliceJunction, Strand,
-    RefinementConfig, AnnoRefineError, Result, Genome, AlignmentCluster, Exon
-};
 use crate::bam::BamReader;
+use crate::types::{
+    AlignmentCluster, AnnoRefineError, Exon, GeneModel, Genome, GenomicInterval, RefinementConfig,
+    Result, SpliceJunction, Strand, Transcript,
+};
 
-use crate::logging::{log_utr_extension, log_splice_junction_refinement, log_gene_model_changes};
+use crate::logging::{log_gene_model_changes, log_splice_junction_refinement, log_utr_extension};
 
-use log::{info, debug, warn};
+use log::{debug, info, warn};
 use rayon::prelude::*;
 use std::collections::HashMap;
-
 
 /// Main refinement engine
 pub struct RefinementEngine {
@@ -20,11 +19,9 @@ pub struct RefinementEngine {
 
 impl RefinementEngine {
     pub fn new(config: RefinementConfig) -> Self {
-        Self {
-            config,
-        }
+        Self { config }
     }
-    
+
     /// Refine a collection of gene models using RNA-seq evidence
     pub fn refine_gene_models(
         &self,
@@ -32,7 +29,10 @@ impl RefinementEngine {
         bam_file_path: &std::path::Path,
         genome: &Genome,
     ) -> Result<RefinementSummary> {
-        info!("Starting gene model refinement for {} genes", gene_models.len());
+        info!(
+            "Starting gene model refinement for {} genes",
+            gene_models.len()
+        );
 
         // Group genes by chromosome for parallel processing
         let mut genes_by_chromosome: HashMap<String, Vec<usize>> = HashMap::new();
@@ -43,7 +43,10 @@ impl RefinementEngine {
                 .push(index);
         }
 
-        info!("Processing {} chromosomes in parallel", genes_by_chromosome.len());
+        info!(
+            "Processing {} chromosomes in parallel",
+            genes_by_chromosome.len()
+        );
 
         // Note: We collect summaries from each thread instead of using shared state
 
@@ -91,12 +94,16 @@ impl RefinementEngine {
             }
         }
 
-        info!("Refinement complete: {} genes processed, {} failed, {} novel genes detected",
-              final_summary.genes_processed, final_summary.genes_failed, final_summary.novel_genes_detected);
+        info!(
+            "Refinement complete: {} genes processed, {} failed, {} novel genes detected",
+            final_summary.genes_processed,
+            final_summary.genes_failed,
+            final_summary.novel_genes_detected
+        );
 
         Ok(final_summary)
     }
-    
+
     /// Refine genes on a single chromosome
     fn refine_genes_on_chromosome(
         &self,
@@ -106,7 +113,11 @@ impl RefinementEngine {
         bam_file_path: &std::path::Path,
         genome: &Genome,
     ) -> Result<(Vec<(usize, GeneModel)>, RefinementSummary)> {
-        debug!("Processing chromosome {} with {} genes", chromosome, gene_indices.len());
+        debug!(
+            "Processing chromosome {} with {} genes",
+            chromosome,
+            gene_indices.len()
+        );
 
         // Create a separate BAM reader for this thread
         let mut bam_reader = BamReader::new(bam_file_path)?;
@@ -148,16 +159,16 @@ impl RefinementEngine {
         genome: &Genome,
     ) -> Result<RefinementSummary> {
         debug!("Refining gene: {}", gene_model.id);
-        
+
         let mut summary = RefinementSummary::new();
-        
+
         // Get RNA-seq evidence for the gene region
         let gene_interval = gene_model.interval();
         let extended_interval = self.extend_interval_for_analysis(&gene_interval);
-        
+
         let splice_junctions = bam_reader.get_splice_junctions_in_region(&extended_interval)?;
         let coverage = bam_reader.get_coverage_in_region(&extended_interval)?;
-        
+
         // Track if any transcript has structural changes
         let mut gene_has_structural_changes = false;
 
@@ -187,13 +198,13 @@ impl RefinementEngine {
             gene_model.has_structural_changes = true;
             debug!("Gene {} marked as having structural changes", gene_model.id);
         }
-        
+
         // Update gene boundaries based on refined transcripts
         gene_model.update_boundaries();
-        
+
         Ok(summary)
     }
-    
+
     /// Refine a single transcript
     fn refine_transcript(
         &self,
@@ -212,14 +223,18 @@ impl RefinementEngine {
         let _original_transcript = transcript.clone();
 
         // 1. Refine intron/exon structure based on splice junctions
-        let structure_changed = self.refine_exon_structure(transcript, splice_junctions, gene_id, genome)?;
+        let structure_changed =
+            self.refine_exon_structure(transcript, splice_junctions, gene_id, genome)?;
 
         // 2. Extend UTRs based on coverage (extend gene model first)
         let utr_changes = self.extend_utrs(transcript, coverage, region, gene_id)?;
 
         // 3. Re-predict CDS in the extended gene model
         // This may result in the same CDS, longer CDS, or completely different CDS
-        let cds_changed = if structure_changed || utr_changes.five_prime_extended || utr_changes.three_prime_extended {
+        let cds_changed = if structure_changed
+            || utr_changes.five_prime_extended
+            || utr_changes.three_prime_extended
+        {
             self.re_predict_cds(transcript, genome, chromosome, strand, gene_id)?
         } else {
             false
@@ -244,7 +259,7 @@ impl RefinementEngine {
 
         Ok(summary)
     }
-    
+
     /// Refine exon structure based on splice junction evidence
     fn refine_exon_structure(
         &self,
@@ -256,12 +271,12 @@ impl RefinementEngine {
         if transcript.exons.len() < 2 {
             return Ok(false); // Single exon transcripts don't have splice junctions
         }
-        
+
         let mut structure_changed = false;
-        
+
         // Get current splice junctions from transcript
         let current_junctions = transcript.get_splice_junctions(Strand::Forward); // Strand will be corrected
-        
+
         // Find well-supported splice junctions that could improve the model
         let mut supported_junctions = Vec::new();
         for junction in splice_junctions {
@@ -269,51 +284,53 @@ impl RefinementEngine {
                 supported_junctions.push(junction.clone());
             }
         }
-        
+
         // For each current junction, check if there's better evidence nearby
         for i in 0..current_junctions.len() {
             let current_junction = &current_junctions[i];
-            
+
             // Look for nearby supported junctions
             for supported in &supported_junctions {
                 if self.junctions_are_compatible(current_junction, supported) {
                     // Validate splice sites before updating (if enabled)
-                    if self.config.validate_splice_sites && !self.validate_splice_junction(supported, genome) {
-                        debug!("Skipping junction update for transcript {} - invalid splice sites",
-                               transcript.id);
+                    if self.config.validate_splice_sites
+                        && !self.validate_splice_junction(supported, genome)
+                    {
+                        debug!(
+                            "Skipping junction update for transcript {} - invalid splice sites",
+                            transcript.id
+                        );
                         continue;
                     }
 
                     // Update exon boundaries if the junction is different
-                    if current_junction.donor_pos != supported.donor_pos ||
-                       current_junction.acceptor_pos != supported.acceptor_pos {
-
+                    if current_junction.donor_pos != supported.donor_pos
+                        || current_junction.acceptor_pos != supported.acceptor_pos
+                    {
                         self.update_exon_boundaries(transcript, i, supported, gene_id)?;
                         structure_changed = true;
-                        debug!("Updated splice junction for transcript {} with validated splice sites",
-                               transcript.id);
+                        debug!(
+                            "Updated splice junction for transcript {} with validated splice sites",
+                            transcript.id
+                        );
                     }
                 }
             }
         }
-        
+
         Ok(structure_changed)
     }
-    
+
     /// Check if two splice junctions are compatible (close enough to be the same)
     fn junctions_are_compatible(&self, j1: &SpliceJunction, j2: &SpliceJunction) -> bool {
         let max_distance = 10; // Allow up to 10bp difference
 
-        (j1.donor_pos as i64 - j2.donor_pos as i64).abs() <= max_distance &&
-        (j1.acceptor_pos as i64 - j2.acceptor_pos as i64).abs() <= max_distance
+        (j1.donor_pos as i64 - j2.donor_pos as i64).abs() <= max_distance
+            && (j1.acceptor_pos as i64 - j2.acceptor_pos as i64).abs() <= max_distance
     }
 
     /// Validate splice junction with splice site motif checking
-    fn validate_splice_junction(
-        &self,
-        junction: &SpliceJunction,
-        genome: &Genome,
-    ) -> bool {
+    fn validate_splice_junction(&self, junction: &SpliceJunction, genome: &Genome) -> bool {
         validate_splice_sites(
             junction.donor_pos,
             junction.acceptor_pos,
@@ -322,7 +339,7 @@ impl RefinementEngine {
             genome,
         )
     }
-    
+
     /// Update exon boundaries based on a new splice junction
     fn update_exon_boundaries(
         &self,
@@ -333,16 +350,16 @@ impl RefinementEngine {
     ) -> Result<()> {
         if junction_index >= transcript.exons.len() - 1 {
             return Err(AnnoRefineError::Refinement(
-                "Junction index out of bounds".to_string()
+                "Junction index out of bounds".to_string(),
             ));
         }
 
         // Validate that the new junction makes sense
         if new_junction.donor_pos >= new_junction.acceptor_pos {
-            return Err(AnnoRefineError::Refinement(
-                format!("Invalid splice junction: donor_pos ({}) >= acceptor_pos ({})",
-                    new_junction.donor_pos, new_junction.acceptor_pos)
-            ));
+            return Err(AnnoRefineError::Refinement(format!(
+                "Invalid splice junction: donor_pos ({}) >= acceptor_pos ({})",
+                new_junction.donor_pos, new_junction.acceptor_pos
+            )));
         }
 
         // Validate that the new boundaries won't create invalid exons
@@ -385,13 +402,18 @@ impl RefinementEngine {
             new_junction.support_count,
         );
 
-        debug!("Updated exon boundaries for transcript {}: exon {} end -> {}, exon {} start -> {}",
-               transcript.id, junction_index + 1, new_junction.donor_pos,
-               junction_index + 2, new_junction.acceptor_pos);
+        debug!(
+            "Updated exon boundaries for transcript {}: exon {} end -> {}, exon {} start -> {}",
+            transcript.id,
+            junction_index + 1,
+            new_junction.donor_pos,
+            junction_index + 2,
+            new_junction.acceptor_pos
+        );
 
         Ok(())
     }
-    
+
     /// Calculate dynamic coverage threshold based on existing exon coverage
     fn calculate_dynamic_coverage_threshold(
         &self,
@@ -424,10 +446,14 @@ impl RefinementEngine {
                 coverage.len().saturating_sub(1)
             };
 
-            if exon_start_offset < coverage.len() && exon_end_offset < coverage.len() && exon_start_offset <= exon_end_offset {
+            if exon_start_offset < coverage.len()
+                && exon_end_offset < coverage.len()
+                && exon_start_offset <= exon_end_offset
+            {
                 let exon_coverage: u32 = coverage[exon_start_offset..=exon_end_offset]
                     .iter()
-                    .sum::<u32>() / (exon_end_offset - exon_start_offset + 1) as u32;
+                    .sum::<u32>()
+                    / (exon_end_offset - exon_start_offset + 1) as u32;
 
                 if exon_coverage > 0 {
                     exon_coverages.push(exon_coverage);
@@ -436,18 +462,25 @@ impl RefinementEngine {
         }
 
         if exon_coverages.is_empty() {
-            debug!("No exon coverage data available for transcript {}, using default threshold", transcript.id);
+            debug!(
+                "No exon coverage data available for transcript {}, using default threshold",
+                transcript.id
+            );
             return Ok(self.config.min_coverage);
         }
 
         // Calculate average coverage across all exons
-        let average_exon_coverage = exon_coverages.iter().sum::<u32>() / exon_coverages.len() as u32;
+        let average_exon_coverage =
+            exon_coverages.iter().sum::<u32>() / exon_coverages.len() as u32;
 
         // Use 10% lower than average, but not less than the configured minimum
-        let dynamic_threshold = ((average_exon_coverage as f64 * 0.9) as u32).max(self.config.min_coverage);
+        let dynamic_threshold =
+            ((average_exon_coverage as f64 * 0.9) as u32).max(self.config.min_coverage);
 
-        debug!("Transcript {}: average exon coverage = {}, dynamic threshold = {}",
-               transcript.id, average_exon_coverage, dynamic_threshold);
+        debug!(
+            "Transcript {}: average exon coverage = {}, dynamic threshold = {}",
+            transcript.id, average_exon_coverage, dynamic_threshold
+        );
 
         Ok(dynamic_threshold)
     }
@@ -470,11 +503,12 @@ impl RefinementEngine {
         }
 
         // Calculate dynamic coverage threshold based on existing exons
-        let dynamic_threshold = self.calculate_dynamic_coverage_threshold(transcript, coverage, region)?;
+        let dynamic_threshold =
+            self.calculate_dynamic_coverage_threshold(transcript, coverage, region)?;
 
         // Determine transcript orientation
         let is_forward = region.strand == Strand::Forward;
-        
+
         // Extend 5' UTR
         let five_prime_extension = if is_forward {
             self.find_upstream_extension(transcript, coverage, region, dynamic_threshold)?
@@ -488,11 +522,15 @@ impl RefinementEngine {
         if five_prime_extension >= MIN_EXTENSION_LENGTH {
             self.apply_five_prime_extension(transcript, five_prime_extension, is_forward, gene_id)?;
             result.five_prime_extended = true;
-            debug!("Extended 5' UTR for transcript {} by {} bp using threshold {}",
-                   transcript.id, five_prime_extension, dynamic_threshold);
+            debug!(
+                "Extended 5' UTR for transcript {} by {} bp using threshold {}",
+                transcript.id, five_prime_extension, dynamic_threshold
+            );
         } else if five_prime_extension > 0 {
-            debug!("Skipped 5' UTR extension for transcript {} ({} bp < {} bp minimum)",
-                   transcript.id, five_prime_extension, MIN_EXTENSION_LENGTH);
+            debug!(
+                "Skipped 5' UTR extension for transcript {} ({} bp < {} bp minimum)",
+                transcript.id, five_prime_extension, MIN_EXTENSION_LENGTH
+            );
         }
 
         // Extend 3' UTR
@@ -503,18 +541,27 @@ impl RefinementEngine {
         };
 
         if three_prime_extension >= MIN_EXTENSION_LENGTH {
-            self.apply_three_prime_extension(transcript, three_prime_extension, is_forward, gene_id)?;
+            self.apply_three_prime_extension(
+                transcript,
+                three_prime_extension,
+                is_forward,
+                gene_id,
+            )?;
             result.three_prime_extended = true;
-            debug!("Extended 3' UTR for transcript {} by {} bp using threshold {}",
-                   transcript.id, three_prime_extension, dynamic_threshold);
+            debug!(
+                "Extended 3' UTR for transcript {} by {} bp using threshold {}",
+                transcript.id, three_prime_extension, dynamic_threshold
+            );
         } else if three_prime_extension > 0 {
-            debug!("Skipped 3' UTR extension for transcript {} ({} bp < {} bp minimum)",
-                   transcript.id, three_prime_extension, MIN_EXTENSION_LENGTH);
+            debug!(
+                "Skipped 3' UTR extension for transcript {} ({} bp < {} bp minimum)",
+                transcript.id, three_prime_extension, MIN_EXTENSION_LENGTH
+            );
         }
-        
+
         Ok(result)
     }
-    
+
     /// Find extension upstream of the transcript
     fn find_upstream_extension(
         &self,
@@ -525,16 +572,16 @@ impl RefinementEngine {
     ) -> Result<u64> {
         let transcript_start = transcript.start;
         let region_start = region.start;
-        
+
         if transcript_start <= region_start {
             return Ok(0);
         }
-        
+
         let start_offset = (transcript_start - region_start) as usize;
         if start_offset >= coverage.len() {
             return Ok(0);
         }
-        
+
         // Look upstream for continuous coverage above dynamic threshold
         let mut extension = 0;
         let mut consecutive_low_coverage = 0;
@@ -555,10 +602,10 @@ impl RefinementEngine {
                 // Don't extend for low coverage positions - only count them as gaps
             }
         }
-        
+
         Ok(extension as u64)
     }
-    
+
     /// Find extension downstream of the transcript
     fn find_downstream_extension(
         &self,
@@ -569,12 +616,12 @@ impl RefinementEngine {
     ) -> Result<u64> {
         let transcript_end = transcript.end;
         let region_start = region.start;
-        
+
         let end_offset = (transcript_end - region_start) as usize;
         if end_offset >= coverage.len() {
             return Ok(0);
         }
-        
+
         // Look downstream for continuous coverage above dynamic threshold
         let mut extension = 0;
         let mut consecutive_low_coverage = 0;
@@ -595,10 +642,10 @@ impl RefinementEngine {
                 // Don't extend for low coverage positions - only count them as gaps
             }
         }
-        
+
         Ok(extension as u64)
     }
-    
+
     /// Apply 5' UTR extension
     fn apply_five_prime_extension(
         &self,
@@ -610,7 +657,7 @@ impl RefinementEngine {
         if transcript.exons.is_empty() {
             return Ok(());
         }
-        
+
         if is_forward {
             // Extend first exon upstream (ensure we don't go below 1)
             let original_start = transcript.exons[0].start;
@@ -618,7 +665,14 @@ impl RefinementEngine {
             let actual_extension = original_start - transcript.exons[0].start;
 
             if actual_extension > 0 {
-                log_utr_extension(gene_id, &transcript.id, "5PRIME", original_start, transcript.exons[0].start, actual_extension);
+                log_utr_extension(
+                    gene_id,
+                    &transcript.id,
+                    "5PRIME",
+                    original_start,
+                    transcript.exons[0].start,
+                    actual_extension,
+                );
             }
         } else {
             // Extend last exon downstream (reverse strand 5' UTR)
@@ -626,12 +680,19 @@ impl RefinementEngine {
             let original_end = transcript.exons[last_idx].end;
             transcript.exons[last_idx].end += extension;
 
-            log_utr_extension(gene_id, &transcript.id, "5PRIME", original_end, transcript.exons[last_idx].end, extension);
+            log_utr_extension(
+                gene_id,
+                &transcript.id,
+                "5PRIME",
+                original_end,
+                transcript.exons[last_idx].end,
+                extension,
+            );
         }
-        
+
         Ok(())
     }
-    
+
     /// Apply 3' UTR extension
     fn apply_three_prime_extension(
         &self,
@@ -643,14 +704,21 @@ impl RefinementEngine {
         if transcript.exons.is_empty() {
             return Ok(());
         }
-        
+
         if is_forward {
             // Extend last exon downstream (forward strand 3' UTR)
             let last_idx = transcript.exons.len() - 1;
             let original_end = transcript.exons[last_idx].end;
             transcript.exons[last_idx].end += extension;
 
-            log_utr_extension(gene_id, &transcript.id, "3PRIME", original_end, transcript.exons[last_idx].end, extension);
+            log_utr_extension(
+                gene_id,
+                &transcript.id,
+                "3PRIME",
+                original_end,
+                transcript.exons[last_idx].end,
+                extension,
+            );
         } else {
             // Extend first exon upstream (reverse strand 3' UTR)
             let original_start = transcript.exons[0].start;
@@ -658,18 +726,28 @@ impl RefinementEngine {
             let actual_extension = original_start - transcript.exons[0].start;
 
             if actual_extension > 0 {
-                log_utr_extension(gene_id, &transcript.id, "3PRIME", original_start, transcript.exons[0].start, actual_extension);
+                log_utr_extension(
+                    gene_id,
+                    &transcript.id,
+                    "3PRIME",
+                    original_start,
+                    transcript.exons[0].start,
+                    actual_extension,
+                );
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Extend the analysis interval to capture potential UTR extensions
     fn extend_interval_for_analysis(&self, interval: &GenomicInterval) -> GenomicInterval {
         GenomicInterval {
             chromosome: interval.chromosome.clone(),
-            start: interval.start.saturating_sub(self.config.max_utr_extension as u64).max(1),
+            start: interval
+                .start
+                .saturating_sub(self.config.max_utr_extension as u64)
+                .max(1),
             end: interval.end + self.config.max_utr_extension as u64,
             strand: interval.strand,
         }
@@ -701,7 +779,7 @@ impl RefinementEngine {
                 chromosome,
                 sequence.sequence.len() as u64,
                 &existing_intervals,
-                genome
+                genome,
             )?;
 
             // Convert clusters to gene candidates
@@ -712,12 +790,19 @@ impl RefinementEngine {
             }
         }
 
-        info!("Novel gene detection complete: {} candidates found", novel_genes.len());
+        info!(
+            "Novel gene detection complete: {} candidates found",
+            novel_genes.len()
+        );
         Ok(novel_genes)
     }
 
     /// Get intervals covered by existing genes on a chromosome
-    fn get_existing_gene_intervals(&self, genes: &[GeneModel], chromosome: &str) -> Vec<GenomicInterval> {
+    fn get_existing_gene_intervals(
+        &self,
+        genes: &[GeneModel],
+        chromosome: &str,
+    ) -> Vec<GenomicInterval> {
         genes
             .iter()
             .filter(|gene| gene.chromosome == chromosome)
@@ -750,30 +835,59 @@ impl RefinementEngine {
         };
         let splice_junctions = bam_reader.get_splice_junctions_in_region(&region)?;
 
-        debug!("Found {} total splice junctions on chromosome {}", splice_junctions.len(), chromosome);
+        debug!(
+            "Found {} total splice junctions on chromosome {}",
+            splice_junctions.len(),
+            chromosome
+        );
 
         // Debug: Check strand distribution
-        let forward_count = splice_junctions.iter().filter(|j| j.strand == Strand::Forward).count();
-        let reverse_count = splice_junctions.iter().filter(|j| j.strand == Strand::Reverse).count();
-        let unknown_count = splice_junctions.iter().filter(|j| j.strand == Strand::Unknown).count();
-        debug!("Strand distribution: Forward={}, Reverse={}, Unknown={}", forward_count, reverse_count, unknown_count);
+        let forward_count = splice_junctions
+            .iter()
+            .filter(|j| j.strand == Strand::Forward)
+            .count();
+        let reverse_count = splice_junctions
+            .iter()
+            .filter(|j| j.strand == Strand::Reverse)
+            .count();
+        let unknown_count = splice_junctions
+            .iter()
+            .filter(|j| j.strand == Strand::Unknown)
+            .count();
+        debug!(
+            "Strand distribution: Forward={}, Reverse={}, Unknown={}",
+            forward_count, reverse_count, unknown_count
+        );
 
         // Filter out junctions that overlap with existing genes or have invalid splice sites
         let novel_junctions: Vec<_> = splice_junctions
             .into_iter()
             .filter(|junction| {
-                !self.junction_overlaps_existing_genes(junction, existing_intervals) &&
-                (!self.config.validate_splice_sites || self.validate_splice_junction(junction, genome))
+                !self.junction_overlaps_existing_genes(junction, existing_intervals)
+                    && (!self.config.validate_splice_sites
+                        || self.validate_splice_junction(junction, genome))
             })
             .collect();
 
         debug!("Found {} novel splice junctions", novel_junctions.len());
 
         // Debug: Check strand distribution of novel junctions
-        let novel_forward = novel_junctions.iter().filter(|j| j.strand == Strand::Forward).count();
-        let novel_reverse = novel_junctions.iter().filter(|j| j.strand == Strand::Reverse).count();
-        let novel_unknown = novel_junctions.iter().filter(|j| j.strand == Strand::Unknown).count();
-        debug!("Novel junction strands: Forward={}, Reverse={}, Unknown={}", novel_forward, novel_reverse, novel_unknown);
+        let novel_forward = novel_junctions
+            .iter()
+            .filter(|j| j.strand == Strand::Forward)
+            .count();
+        let novel_reverse = novel_junctions
+            .iter()
+            .filter(|j| j.strand == Strand::Reverse)
+            .count();
+        let novel_unknown = novel_junctions
+            .iter()
+            .filter(|j| j.strand == Strand::Unknown)
+            .count();
+        debug!(
+            "Novel junction strands: Forward={}, Reverse={}, Unknown={}",
+            novel_forward, novel_reverse, novel_unknown
+        );
 
         // Create clusters and remove duplicates at same coordinates
         let mut clusters: Vec<AlignmentCluster> = novel_junctions
@@ -801,9 +915,10 @@ impl RefinementEngine {
             let mut j = i + 1;
 
             // Check for overlapping clusters at same coordinates
-            while j < clusters.len() &&
-                  clusters[j].start == current.start &&
-                  clusters[j].end == current.end {
+            while j < clusters.len()
+                && clusters[j].start == current.start
+                && clusters[j].end == current.end
+            {
                 if clusters[j].alignment_count > best_cluster.alignment_count {
                     best_cluster = clusters[j].clone();
                 }
@@ -829,9 +944,9 @@ impl RefinementEngine {
         let junction_start = junction.donor_pos.min(junction.acceptor_pos);
         let junction_end = junction.donor_pos.max(junction.acceptor_pos);
 
-        existing_intervals.iter().any(|interval| {
-            junction_start < interval.end && junction_end > interval.start
-        })
+        existing_intervals
+            .iter()
+            .any(|interval| junction_start < interval.end && junction_end > interval.start)
     }
 
     /// Convert an alignment cluster to a gene candidate (simplified implementation)
@@ -842,21 +957,26 @@ impl RefinementEngine {
     ) -> Result<Option<GeneModel>> {
         // Check if cluster meets minimum requirements
         if cluster.end - cluster.start < self.config.min_novel_gene_length {
-            debug!("Cluster too short: {} bp < {} bp minimum",
-                   cluster.end - cluster.start, self.config.min_novel_gene_length);
+            debug!(
+                "Cluster too short: {} bp < {} bp minimum",
+                cluster.end - cluster.start,
+                self.config.min_novel_gene_length
+            );
             return Ok(None);
         }
 
         // Create a simple single-exon gene for now
-        let gene_id = format!("novel_{}_{}_{}_{}",
-                             cluster.chromosome,
-                             cluster.start,
-                             cluster.end,
-                             match cluster.strand {
-                                 Strand::Forward => "plus",
-                                 Strand::Reverse => "minus",
-                                 Strand::Unknown => "unknown",
-                             });
+        let gene_id = format!(
+            "novel_{}_{}_{}_{}",
+            cluster.chromosome,
+            cluster.start,
+            cluster.end,
+            match cluster.strand {
+                Strand::Forward => "plus",
+                Strand::Reverse => "minus",
+                Strand::Unknown => "unknown",
+            }
+        );
 
         let exon = Exon {
             start: cluster.start,
@@ -865,7 +985,8 @@ impl RefinementEngine {
         };
 
         // Predict CDS regions for the novel gene
-        let cds_regions = self.predict_cds_for_novel_gene(&gene_id, &[exon.clone()], cluster.strand, _genome)?;
+        let cds_regions =
+            self.predict_cds_for_novel_gene(&gene_id, &[exon.clone()], cluster.strand, _genome)?;
 
         // Only create gene if we found a valid CDS
         if cds_regions.is_empty() {
@@ -903,8 +1024,10 @@ impl RefinementEngine {
             original_cds_lengths,
         };
 
-        info!("Created novel gene candidate: {} ({}:{}-{})",
-              gene_model.id, gene_model.chromosome, gene_model.start, gene_model.end);
+        info!(
+            "Created novel gene candidate: {} ({}:{}-{})",
+            gene_model.id, gene_model.chromosome, gene_model.start, gene_model.end
+        );
 
         Ok(Some(gene_model))
     }
@@ -917,8 +1040,6 @@ impl RefinementEngine {
         strand: Strand,
         genome: &Genome,
     ) -> Result<Vec<crate::types::CdsRegion>> {
-
-
         if exons.is_empty() {
             return Ok(Vec::new());
         }
@@ -963,20 +1084,23 @@ impl RefinementEngine {
         if let Some((orf_start, orf_end)) = longest_orf {
             // Check if ORF meets minimum length requirement
             let orf_length = orf_end - orf_start;
-            if orf_length < 150 { // Minimum 50 amino acids
-                debug!("ORF too short for novel gene {}: {} bp", gene_id, orf_length);
+            if orf_length < 150 {
+                // Minimum 50 amino acids
+                debug!(
+                    "ORF too short for novel gene {}: {} bp",
+                    gene_id, orf_length
+                );
                 return Ok(Vec::new());
             }
 
             // Convert transcript coordinates back to genomic coordinates
-            let cds_regions = self.transcript_to_genomic_coords(
-                orf_start,
-                orf_end,
-                exons,
-                strand
-            )?;
+            let cds_regions =
+                self.transcript_to_genomic_coords(orf_start, orf_end, exons, strand)?;
 
-            info!("Predicted CDS for novel gene {}: {} bp ORF", gene_id, orf_length);
+            info!(
+                "Predicted CDS for novel gene {}: {} bp ORF",
+                gene_id, orf_length
+            );
             Ok(cds_regions)
         } else {
             debug!("No valid ORF found for novel gene {}", gene_id);
@@ -1052,10 +1176,14 @@ impl RefinementEngine {
         let original_cds = transcript.cds_regions.clone();
 
         // Extract the full transcript sequence from the extended exons
-        let transcript_sequence = self.extract_transcript_sequence(transcript, genome, chromosome, strand)?;
+        let transcript_sequence =
+            self.extract_transcript_sequence(transcript, genome, chromosome, strand)?;
 
         if transcript_sequence.is_empty() {
-            debug!("Could not extract transcript sequence for {}", transcript.id);
+            debug!(
+                "Could not extract transcript sequence for {}",
+                transcript.id
+            );
             return Ok(false);
         }
 
@@ -1065,19 +1193,19 @@ impl RefinementEngine {
         if let Some((orf_start, orf_end)) = longest_orf {
             // Check if ORF meets minimum length requirement
             let orf_length = orf_end - orf_start;
-            if orf_length < 150 { // Minimum 50 amino acids
-                debug!("ORF too short for transcript {}: {} bp", transcript.id, orf_length);
+            if orf_length < 150 {
+                // Minimum 50 amino acids
+                debug!(
+                    "ORF too short for transcript {}: {} bp",
+                    transcript.id, orf_length
+                );
                 // Keep original CDS if new ORF is too short
                 return Ok(false);
             }
 
             // Convert transcript coordinates back to genomic coordinates
-            let new_cds_regions = self.transcript_to_genomic_coords(
-                orf_start,
-                orf_end,
-                &transcript.exons,
-                strand
-            )?;
+            let new_cds_regions =
+                self.transcript_to_genomic_coords(orf_start, orf_end, &transcript.exons, strand)?;
 
             // Compare with original CDS
             let cds_changed = !cds_regions_equal(&original_cds, &new_cds_regions);
@@ -1104,12 +1232,16 @@ impl RefinementEngine {
                         gene_id,
                         &transcript.id,
                         "CDS_REPREDICTION",
-                        &format!("Original: {} bp, New: {} bp, Diff: {}bp ({}%)",
-                                original_length, new_length, length_diff, percent_change)
+                        &format!(
+                            "Original: {} bp, New: {} bp, Diff: {}bp ({}%)",
+                            original_length, new_length, length_diff, percent_change
+                        ),
                     );
                 } else {
-                    debug!("Minor CDS adjustment for transcript {}: {} bp → {} bp ({}bp diff)",
-                           transcript.id, original_length, new_length, length_diff);
+                    debug!(
+                        "Minor CDS adjustment for transcript {}: {} bp → {} bp ({}bp diff)",
+                        transcript.id, original_length, new_length, length_diff
+                    );
                 }
 
                 // Update transcript with new CDS regardless of size
@@ -1118,7 +1250,10 @@ impl RefinementEngine {
 
             Ok(cds_changed)
         } else {
-            debug!("No valid ORF found in extended transcript {}", transcript.id);
+            debug!(
+                "No valid ORF found in extended transcript {}",
+                transcript.id
+            );
             // Keep original CDS if no valid ORF found
             Ok(false)
         }
@@ -1185,7 +1320,7 @@ impl RefinementSummary {
     fn new() -> Self {
         Self::default()
     }
-    
+
     fn merge(&mut self, other: RefinementSummary) {
         self.transcripts_with_structure_changes += other.transcripts_with_structure_changes;
         self.transcripts_with_5utr_extension += other.transcripts_with_5utr_extension;

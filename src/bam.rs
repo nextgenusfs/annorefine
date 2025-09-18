@@ -1,10 +1,12 @@
 //! BAM file reading and RNA-seq alignment processing
 
-use crate::types::{RnaSeqAlignment, SpliceJunction, Strand, GenomicInterval, AnnoRefineError, Result};
-use rust_htslib::{bam, bam::Read};
-use std::path::Path;
-use std::collections::HashMap;
+use crate::types::{
+    AnnoRefineError, GenomicInterval, Result, RnaSeqAlignment, SpliceJunction, Strand,
+};
 use log::debug;
+use rust_htslib::{bam, bam::Read};
+use std::collections::HashMap;
+use std::path::Path;
 
 /// BAM reader for processing RNA-seq alignments
 pub struct BamReader {
@@ -17,63 +19,80 @@ impl BamReader {
     pub fn new<P: AsRef<Path>>(bam_path: P) -> Result<Self> {
         let bam_path = bam_path.as_ref();
         debug!("Opening BAM file: {}", bam_path.display());
-        
-        let reader = bam::IndexedReader::from_path(bam_path)
-            .map_err(|e| AnnoRefineError::BamParse(
-                format!("Failed to open BAM file {}: {}", bam_path.display(), e)
-            ))?;
-        
+
+        let reader = bam::IndexedReader::from_path(bam_path).map_err(|e| {
+            AnnoRefineError::BamParse(format!(
+                "Failed to open BAM file {}: {}",
+                bam_path.display(),
+                e
+            ))
+        })?;
+
         let header = reader.header().clone();
-        
-        debug!("Successfully opened BAM file with {} reference sequences",
-               header.target_count());
-        
+
+        debug!(
+            "Successfully opened BAM file with {} reference sequences",
+            header.target_count()
+        );
+
         Ok(BamReader { reader, header })
     }
-    
+
     /// Get alignments in a genomic region
-    pub fn get_alignments_in_region(&mut self, region: &GenomicInterval) -> Result<Vec<RnaSeqAlignment>> {
+    pub fn get_alignments_in_region(
+        &mut self,
+        region: &GenomicInterval,
+    ) -> Result<Vec<RnaSeqAlignment>> {
         let tid = self.get_target_id(&region.chromosome)?;
-        
+
         // Convert to 0-based coordinates for BAM
         let start = region.start.saturating_sub(1);
         let end = region.end;
-        
-        self.reader.fetch((tid, start, end))
-            .map_err(|e| AnnoRefineError::BamParse(
-                format!("Failed to fetch region {}:{}-{}: {}", 
-                    region.chromosome, region.start, region.end, e)
-            ))?;
-        
+
+        self.reader.fetch((tid, start, end)).map_err(|e| {
+            AnnoRefineError::BamParse(format!(
+                "Failed to fetch region {}:{}-{}: {}",
+                region.chromosome, region.start, region.end, e
+            ))
+        })?;
+
         let mut alignments = Vec::new();
-        
+
         for result in self.reader.records() {
-            let record = result.map_err(|e| AnnoRefineError::BamParse(
-                format!("Failed to read BAM record: {}", e)
-            ))?;
-            
+            let record = result.map_err(|e| {
+                AnnoRefineError::BamParse(format!("Failed to read BAM record: {}", e))
+            })?;
+
             // Skip unmapped reads
             if record.is_unmapped() {
                 continue;
             }
-            
+
             // Skip secondary alignments and duplicates
             if record.is_secondary() || record.is_duplicate() {
                 continue;
             }
-            
+
             let alignment = parse_bam_record(&record, &self.header)?;
             alignments.push(alignment);
         }
-        
-        debug!("Found {} alignments in region {}:{}-{}", 
-               alignments.len(), region.chromosome, region.start, region.end);
-        
+
+        debug!(
+            "Found {} alignments in region {}:{}-{}",
+            alignments.len(),
+            region.chromosome,
+            region.start,
+            region.end
+        );
+
         Ok(alignments)
     }
-    
+
     /// Get splice junctions from alignments in a region
-    pub fn get_splice_junctions_in_region(&mut self, region: &GenomicInterval) -> Result<Vec<SpliceJunction>> {
+    pub fn get_splice_junctions_in_region(
+        &mut self,
+        region: &GenomicInterval,
+    ) -> Result<Vec<SpliceJunction>> {
         let alignments = self.get_alignments_in_region(region)?;
         let mut junction_counts: HashMap<(u64, u64, Strand), u32> = HashMap::new();
 
@@ -98,20 +117,23 @@ impl BamReader {
         // Sort by position
         junctions.sort_by_key(|j| j.donor_pos);
 
-        debug!("Found {} unique splice junctions in region", junctions.len());
+        debug!(
+            "Found {} unique splice junctions in region",
+            junctions.len()
+        );
         Ok(junctions)
     }
-    
+
     /// Get coverage depth at each position in a region
     pub fn get_coverage_in_region(&mut self, region: &GenomicInterval) -> Result<Vec<u32>> {
         let alignments = self.get_alignments_in_region(region)?;
         let region_length = (region.end - region.start + 1) as usize;
         let mut coverage = vec![0u32; region_length];
-        
+
         for alignment in alignments {
             let align_start = alignment.start.max(region.start);
             let align_end = alignment.end.min(region.end);
-            
+
             for pos in align_start..=align_end {
                 let idx = (pos - region.start) as usize;
                 if idx < coverage.len() {
@@ -119,10 +141,10 @@ impl BamReader {
                 }
             }
         }
-        
+
         Ok(coverage)
     }
-    
+
     fn get_target_id(&self, chromosome: &str) -> Result<u32> {
         for (tid, target) in self.header.target_names().iter().enumerate() {
             if *target == chromosome.as_bytes() {
@@ -130,9 +152,10 @@ impl BamReader {
             }
         }
 
-        Err(AnnoRefineError::BamParse(
-            format!("Chromosome '{}' not found in BAM header", chromosome)
-        ))
+        Err(AnnoRefineError::BamParse(format!(
+            "Chromosome '{}' not found in BAM header",
+            chromosome
+        )))
     }
 }
 
@@ -157,7 +180,11 @@ fn parse_bam_record(record: &bam::Record, header: &bam::HeaderView) -> Result<Rn
             &cigar_view,
             start,
             &chromosome,
-            if record.is_reverse() { Strand::Reverse } else { Strand::Forward },
+            if record.is_reverse() {
+                Strand::Reverse
+            } else {
+                Strand::Forward
+            },
         );
         (end, cigar_string, splice_junctions)
     } else {
@@ -169,7 +196,11 @@ fn parse_bam_record(record: &bam::Record, header: &bam::HeaderView) -> Result<Rn
             &cigar_owned,
             start,
             &chromosome,
-            if record.is_reverse() { Strand::Reverse } else { Strand::Forward },
+            if record.is_reverse() {
+                Strand::Reverse
+            } else {
+                Strand::Forward
+            },
         );
         (end, cigar_string, splice_junctions)
     };
@@ -206,9 +237,9 @@ fn extract_splice_junctions_from_cigar_view(
 
     for operation in cigar.iter() {
         match operation {
-            bam::record::Cigar::Match(len) |
-            bam::record::Cigar::Equal(len) |
-            bam::record::Cigar::Diff(len) => {
+            bam::record::Cigar::Match(len)
+            | bam::record::Cigar::Equal(len)
+            | bam::record::Cigar::Diff(len) => {
                 current_pos += *len as u64;
             }
             bam::record::Cigar::RefSkip(len) => {
@@ -228,10 +259,10 @@ fn extract_splice_junctions_from_cigar_view(
             bam::record::Cigar::Del(len) => {
                 current_pos += *len as u64;
             }
-            bam::record::Cigar::Ins(_) |
-            bam::record::Cigar::SoftClip(_) |
-            bam::record::Cigar::HardClip(_) |
-            bam::record::Cigar::Pad(_) => {
+            bam::record::Cigar::Ins(_)
+            | bam::record::Cigar::SoftClip(_)
+            | bam::record::Cigar::HardClip(_)
+            | bam::record::Cigar::Pad(_) => {
                 // These don't advance the reference position
             }
         }
@@ -252,9 +283,9 @@ fn extract_splice_junctions_from_cigar_owned(
 
     for operation in cigar.iter() {
         match operation {
-            bam::record::Cigar::Match(len) |
-            bam::record::Cigar::Equal(len) |
-            bam::record::Cigar::Diff(len) => {
+            bam::record::Cigar::Match(len)
+            | bam::record::Cigar::Equal(len)
+            | bam::record::Cigar::Diff(len) => {
                 current_pos += *len as u64;
             }
             bam::record::Cigar::RefSkip(len) => {
@@ -274,10 +305,10 @@ fn extract_splice_junctions_from_cigar_owned(
             bam::record::Cigar::Del(len) => {
                 current_pos += *len as u64;
             }
-            bam::record::Cigar::Ins(_) |
-            bam::record::Cigar::SoftClip(_) |
-            bam::record::Cigar::HardClip(_) |
-            bam::record::Cigar::Pad(_) => {
+            bam::record::Cigar::Ins(_)
+            | bam::record::Cigar::SoftClip(_)
+            | bam::record::Cigar::HardClip(_)
+            | bam::record::Cigar::Pad(_) => {
                 // These don't advance the reference position
             }
         }
@@ -289,26 +320,28 @@ fn extract_splice_junctions_from_cigar_owned(
 /// Calculate alignment statistics for a BAM file
 pub fn get_alignment_stats<P: AsRef<Path>>(bam_path: P) -> Result<AlignmentStats> {
     let bam_path = bam_path.as_ref();
-    let mut reader = bam::Reader::from_path(bam_path)
-        .map_err(|e| AnnoRefineError::BamParse(
-            format!("Failed to open BAM file {}: {}", bam_path.display(), e)
-        ))?;
-    
+    let mut reader = bam::Reader::from_path(bam_path).map_err(|e| {
+        AnnoRefineError::BamParse(format!(
+            "Failed to open BAM file {}: {}",
+            bam_path.display(),
+            e
+        ))
+    })?;
+
     let mut total_reads = 0;
     let mut mapped_reads = 0;
     let mut spliced_reads = 0;
     let mut total_splice_junctions = 0;
-    
+
     for result in reader.records() {
-        let record = result.map_err(|e| AnnoRefineError::BamParse(
-            format!("Failed to read BAM record: {}", e)
-        ))?;
-        
+        let record = result
+            .map_err(|e| AnnoRefineError::BamParse(format!("Failed to read BAM record: {}", e)))?;
+
         total_reads += 1;
-        
+
         if !record.is_unmapped() {
             mapped_reads += 1;
-            
+
             // Check for splice junctions (RefSkip operations in CIGAR)
             let cigar = match record.cigar_cached() {
                 Some(cigar) => cigar,
@@ -342,7 +375,7 @@ pub fn get_alignment_stats<P: AsRef<Path>>(bam_path: P) -> Result<AlignmentStats
             }
         }
     }
-    
+
     Ok(AlignmentStats {
         total_reads,
         mapped_reads,
@@ -367,17 +400,22 @@ impl std::fmt::Display for AlignmentStats {
         } else {
             0.0
         };
-        
+
         let splice_rate = if self.mapped_reads > 0 {
             (self.spliced_reads as f64 / self.mapped_reads as f64) * 100.0
         } else {
             0.0
         };
-        
-        write!(f, 
+
+        write!(
+            f,
             "Total reads: {}, Mapped: {} ({:.2}%), Spliced: {} ({:.2}%), Splice junctions: {}",
-            self.total_reads, self.mapped_reads, mapping_rate, 
-            self.spliced_reads, splice_rate, self.total_splice_junctions
+            self.total_reads,
+            self.mapped_reads,
+            mapping_rate,
+            self.spliced_reads,
+            splice_rate,
+            self.total_splice_junctions
         )
     }
 }

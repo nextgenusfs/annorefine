@@ -8,19 +8,19 @@ use thiserror::Error;
 pub enum AnnoRefineError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    
+
     #[error("FASTA parsing error: {0}")]
     FastaParse(String),
-    
+
     #[error("GFF3 parsing error: {0}")]
     Gff3Parse(String),
-    
+
     #[error("BAM parsing error: {0}")]
     BamParse(String),
-    
+
     #[error("Invalid gene model: {0}")]
     InvalidGeneModel(String),
-    
+
     #[error("Refinement error: {0}")]
     Refinement(String),
 }
@@ -30,7 +30,7 @@ pub type Result<T> = std::result::Result<T, AnnoRefineError>;
 /// Represents a genomic coordinate
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct GenomicPosition {
-    pub chromosome: u32,  // Index into chromosome names
+    pub chromosome: u32, // Index into chromosome names
     pub position: u64,
 }
 
@@ -38,8 +38,8 @@ pub struct GenomicPosition {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenomicInterval {
     pub chromosome: String,
-    pub start: u64,  // 1-based, inclusive
-    pub end: u64,    // 1-based, inclusive
+    pub start: u64, // 1-based, inclusive
+    pub end: u64,   // 1-based, inclusive
     pub strand: Strand,
 }
 
@@ -63,7 +63,7 @@ impl std::fmt::Display for Strand {
 
 impl std::str::FromStr for Strand {
     type Err = AnnoRefineError;
-    
+
     fn from_str(s: &str) -> Result<Self> {
         match s {
             "+" => Ok(Strand::Forward),
@@ -96,39 +96,38 @@ impl Genome {
             sequence_order: Vec::new(),
         }
     }
-    
+
     pub fn add_sequence(&mut self, sequence: GenomeSequence) {
         self.sequence_order.push(sequence.id.clone());
         self.sequences.insert(sequence.id.clone(), sequence);
     }
-    
+
     pub fn get_sequence(&self, id: &str) -> Option<&GenomeSequence> {
         self.sequences.get(id)
     }
-    
+
     pub fn get_subsequence(&self, interval: &GenomicInterval) -> Result<Vec<u8>> {
-        let seq = self.get_sequence(&interval.chromosome)
-            .ok_or_else(|| AnnoRefineError::FastaParse(
-                format!("Chromosome not found: {}", interval.chromosome)
-            ))?;
-        
+        let seq = self.get_sequence(&interval.chromosome).ok_or_else(|| {
+            AnnoRefineError::FastaParse(format!("Chromosome not found: {}", interval.chromosome))
+        })?;
+
         let start = (interval.start - 1) as usize; // Convert to 0-based
         let end = interval.end as usize;
-        
+
         if start >= seq.sequence.len() || end > seq.sequence.len() {
-            return Err(AnnoRefineError::FastaParse(
-                format!("Interval out of bounds: {}:{}-{}", 
-                    interval.chromosome, interval.start, interval.end)
-            ));
+            return Err(AnnoRefineError::FastaParse(format!(
+                "Interval out of bounds: {}:{}-{}",
+                interval.chromosome, interval.start, interval.end
+            )));
         }
-        
+
         let mut subseq = seq.sequence[start..end].to_vec();
-        
+
         // Reverse complement if on reverse strand
         if interval.strand == Strand::Reverse {
             subseq = reverse_complement(&subseq);
         }
-        
+
         Ok(subseq)
     }
 }
@@ -176,7 +175,7 @@ impl std::fmt::Display for FeatureType {
 
 impl std::str::FromStr for FeatureType {
     type Err = AnnoRefineError;
-    
+
     fn from_str(s: &str) -> Result<Self> {
         match s {
             "gene" => Ok(FeatureType::Gene),
@@ -208,15 +207,15 @@ impl Gff3Feature {
     pub fn get_id(&self) -> Option<&str> {
         self.attributes.get("ID")?.first().map(|s| s.as_str())
     }
-    
+
     pub fn get_parent(&self) -> Option<&str> {
         self.attributes.get("Parent")?.first().map(|s| s.as_str())
     }
-    
+
     pub fn get_name(&self) -> Option<&str> {
         self.attributes.get("Name")?.first().map(|s| s.as_str())
     }
-    
+
     pub fn interval(&self) -> GenomicInterval {
         GenomicInterval {
             chromosome: self.seqid.clone(),

@@ -5,12 +5,9 @@ use pyo3::prelude::*;
 #[cfg(feature = "python")]
 use pyo3::types::PyDict;
 
-
 #[cfg(feature = "python")]
 use crate::{
-    gff3::parse_gff3_file,
-    refinement::RefinementEngine,
-    output::Gff3Writer,
+    gff3::parse_gff3_file, output::Gff3Writer, refinement::RefinementEngine,
     types::RefinementConfig,
 };
 
@@ -136,8 +133,6 @@ impl PyGeneModel {
     }
 }
 
-
-
 /// Main Python interface for AnnoRefine
 #[cfg(feature = "python")]
 #[pyfunction]
@@ -153,50 +148,74 @@ pub fn refine_annotations<'py>(
 ) -> PyResult<Bound<'py, PyDict>> {
     // Set up threading - create a custom thread pool if specified
     let thread_pool = if let Some(num_threads) = threads {
-        Some(rayon::ThreadPoolBuilder::new()
-            .num_threads(num_threads)
-            .build()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to create thread pool: {}", e)))?)
+        Some(
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(num_threads)
+                .build()
+                .map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                        "Failed to create thread pool: {}",
+                        e
+                    ))
+                })?,
+        )
     } else {
         None
     };
 
     // Use provided config or default
-    let rust_config: RefinementConfig = config.unwrap_or_else(|| PyRefinementConfig::new(5, 3, 1000, false, 10, 300, 50, true)).into();
+    let rust_config: RefinementConfig = config
+        .unwrap_or_else(|| PyRefinementConfig::new(5, 3, 1000, false, 10, 300, 50, true))
+        .into();
 
     // Load genome
-    let genome = crate::fasta::parse_fasta_file(fasta_file)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to load genome: {:?}", e)))?;
+    let genome = crate::fasta::parse_fasta_file(fasta_file).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to load genome: {:?}", e))
+    })?;
 
     // Parse GFF3
-    let mut gene_models = parse_gff3_file(gff3_file)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to parse GFF3: {:?}", e)))?;
+    let mut gene_models = parse_gff3_file(gff3_file).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to parse GFF3: {:?}", e))
+    })?;
 
     // Create refinement engine
     let engine = RefinementEngine::new(rust_config);
 
     // Refine annotations with interrupt handling
-    let summary = py.allow_threads(|| {
-        if let Some(pool) = thread_pool {
-            pool.install(|| {
+    let summary = py
+        .allow_threads(|| {
+            if let Some(pool) = thread_pool {
+                pool.install(|| {
+                    engine.refine_gene_models(
+                        &mut gene_models,
+                        std::path::Path::new(bam_file),
+                        &genome,
+                    )
+                })
+            } else {
                 engine.refine_gene_models(&mut gene_models, std::path::Path::new(bam_file), &genome)
-            })
-        } else {
-            engine.refine_gene_models(&mut gene_models, std::path::Path::new(bam_file), &genome)
-        }
-    })
-    .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Refinement failed: {:?}", e)))?;
+            }
+        })
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Refinement failed: {:?}", e))
+        })?;
 
     // Write output
-    let mut writer = Gff3Writer::new(output_file)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to create output file: {:?}", e)))?;
+    let mut writer = Gff3Writer::new(output_file).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+            "Failed to create output file: {:?}",
+            e
+        ))
+    })?;
 
-    writer.write_gene_models(&gene_models)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to write output: {:?}", e)))?;
+    writer.write_gene_models(&gene_models).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to write output: {:?}", e))
+    })?;
 
     // Convert gene models to Python objects
-    let py_gene_models: Vec<PyGeneModel> = gene_models.iter().map(|gene| {
-        PyGeneModel {
+    let py_gene_models: Vec<PyGeneModel> = gene_models
+        .iter()
+        .map(|gene| PyGeneModel {
             id: gene.id.clone(),
             chromosome: gene.chromosome.clone(),
             start: gene.start,
@@ -204,16 +223,25 @@ pub fn refine_annotations<'py>(
             strand: format!("{:?}", gene.strand),
             has_structural_changes: gene.has_structural_changes,
             transcript_count: gene.transcripts.len(),
-        }
-    }).collect();
+        })
+        .collect();
 
     // Create result dictionary
     let result = PyDict::new_bound(py);
     result.set_item("genes_processed", summary.genes_processed)?;
     result.set_item("genes_failed", summary.genes_failed)?;
-    result.set_item("transcripts_with_structure_changes", summary.transcripts_with_structure_changes)?;
-    result.set_item("transcripts_with_5utr_extension", summary.transcripts_with_5utr_extension)?;
-    result.set_item("transcripts_with_3utr_extension", summary.transcripts_with_3utr_extension)?;
+    result.set_item(
+        "transcripts_with_structure_changes",
+        summary.transcripts_with_structure_changes,
+    )?;
+    result.set_item(
+        "transcripts_with_5utr_extension",
+        summary.transcripts_with_5utr_extension,
+    )?;
+    result.set_item(
+        "transcripts_with_3utr_extension",
+        summary.transcripts_with_3utr_extension,
+    )?;
     result.set_item("novel_genes_detected", summary.novel_genes_detected)?;
     result.set_item("gene_models", py_gene_models.into_py(py))?;
     result.set_item("output_file", output_file)?;
@@ -265,7 +293,10 @@ fn _annorefine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Add module metadata
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add("__author__", "Jon Palmer")?;
-    m.add("__description__", "Genome annotation refinement using RNA-seq data")?;
+    m.add(
+        "__description__",
+        "Genome annotation refinement using RNA-seq data",
+    )?;
 
     Ok(())
 }
