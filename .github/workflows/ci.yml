@@ -109,16 +109,22 @@ jobs:
         brew install openssl pkg-config
         echo "PKG_CONFIG_PATH=$(brew --prefix openssl)/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
 
-    - name: Install maturin and test dependencies
+    - name: Create virtual environment
       run: |
+        python -m venv .venv
+        source .venv/bin/activate
         pip install --upgrade pip
         pip install maturin[patchelf] pytest pytest-cov
 
     - name: Build Python package
-      run: maturin develop --features python
+      run: |
+        source .venv/bin/activate
+        maturin develop --features python
 
     - name: Run Python tests
-      run: pytest tests/ -v
+      run: |
+        source .venv/bin/activate
+        pytest tests/ -v
 
       
   build-binary:
@@ -185,7 +191,9 @@ jobs:
         echo "PKG_CONFIG_PATH=$(brew --prefix openssl)/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
 
     - name: Install maturin
-      run: pip install maturin[patchelf]
+      run: |
+        pip install --upgrade pip
+        pip install maturin[patchelf]
 
     - name: Build wheels
       run: maturin build --release --out dist --features python
