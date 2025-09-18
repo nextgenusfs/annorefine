@@ -167,9 +167,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
@@ -187,12 +184,11 @@ jobs:
         brew install openssl pkg-config
         echo "PKG_CONFIG_PATH=$(brew --prefix openssl)/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
 
+    - name: Install maturin
+      run: pip install maturin[patchelf]
+
     - name: Build wheels
-      uses: PyO3/maturin-action@v1
-      with:
-        args: --release --out dist --features python
-        sccache: 'true'
-        manylinux: auto
+      run: maturin build --release --out dist --features python
 
     - name: Upload wheels
       uses: actions/upload-artifact@v4
