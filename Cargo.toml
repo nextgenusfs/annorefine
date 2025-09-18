@@ -1,0 +1,36 @@
+[package]
+name = "annorefine"
+version = "2025.9.18"
+edition = "2021"
+description = "Genome annotation refinement using RNA-seq data"
+license = "MIT"
+repository = "https://github.com/nextgenusfs/annorefine"
+homepage = "https://github.com/nextgenusfs/annorefine"
+keywords = ["bioinformatics", "genomics", "annotation", "rna-seq"]
+categories = ["science", "command-line-utilities"]
+
+[lib]
+name = "annorefine"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+anyhow = "1.0.99"
+bio = "2.3.0"
+chrono = { version = "0.4.42", features = ["serde"] }
+clap = { version = "4.5.47", features = ["derive"] }
+colored = "3.0.0"
+env_logger = "0.11.8"
+log = "0.4.28"
+rayon = "1.11.0"
+rust-htslib = "0.50.0"
+thiserror = "1.0.69"
+
+# Python bindings (optional)
+pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
+
+[features]
+default = []
+python = ["pyo3"]
+
+[dev-dependencies]
+tempfile = "3.22.0"

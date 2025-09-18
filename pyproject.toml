@@ -1,0 +1,71 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "annorefine"
+version = "2025.9.18"
+description = "Genome annotation refinement using RNA-seq data"
+authors = [
+    {name = "Jon Palmer", email = "nextgenusfs@gmail.com"},
+]
+license = {text = "MIT"}
+readme = "README.md"
+homepage = "https://github.com/nextgenusfs/annorefine"
+repository = "https://github.com/nextgenusfs/annorefine"
+documentation = "https://github.com/nextgenusfs/annorefine"
+keywords = ["bioinformatics", "genomics", "annotation", "rna-seq"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+requires-python = ">=3.8"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0",
+    "pytest-cov",
+    "black",
+    "isort",
+    "mypy",
+    "pre-commit",
+]
+
+[project.urls]
+"Bug Reports" = "https://github.com/nextgenusfs/annorefine/issues"
+"Source" = "https://github.com/nextgenusfs/annorefine"
+
+[tool.maturin]
+features = ["pyo3/extension-module", "python"]
+python-source = "python"
+module-name = "annorefine._annorefine"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
