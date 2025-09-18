@@ -39,7 +39,7 @@ impl RefinementEngine {
         for (index, gene_model) in gene_models.iter().enumerate() {
             genes_by_chromosome
                 .entry(gene_model.chromosome.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(index);
         }
 

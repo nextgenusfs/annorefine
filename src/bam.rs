@@ -177,7 +177,7 @@ fn parse_bam_record(record: &bam::Record, header: &bam::HeaderView) -> Result<Rn
         let end = cigar_view.end_pos() as u64;
         let cigar_string = format!("{}", cigar_view);
         let splice_junctions = extract_splice_junctions_from_cigar_view(
-            &cigar_view,
+            cigar_view,
             start,
             &chromosome,
             if record.is_reverse() {

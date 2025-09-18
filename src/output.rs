@@ -20,7 +20,7 @@ impl Gff3Writer {
         let path = path.as_ref();
         info!("Creating GFF3 output file: {}", path.display());
 
-        let file = File::create(path).map_err(|e| AnnoRefineError::Io(e))?;
+        let file = File::create(path).map_err(AnnoRefineError::Io)?;
 
         let mut writer = BufWriter::new(file);
 

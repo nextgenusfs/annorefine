@@ -144,7 +144,7 @@ fn parse_attributes(attr_str: &str) -> Result<HashMap<String, Vec<String>>> {
         let key = url_decode(parts[0])?;
         let values: Vec<String> = parts[1]
             .split(',')
-            .map(|v| url_decode(v))
+            .map(url_decode)
             .collect::<Result<Vec<_>>>()?;
 
         attributes.insert(key, values);
