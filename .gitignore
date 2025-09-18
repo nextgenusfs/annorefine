@@ -34,5 +34,9 @@ Thumbs.db
 # Local test files
 test_output.gff3
 test_interrupt_output.gff3
+
+# Virtual environments
+.venv/
+venv/
 test_fixes.py
 test_interrupt.py

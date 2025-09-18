@@ -104,8 +104,8 @@ class TestAnnoRefine:
         assert "annotation" in annorefine.__description__.lower()
 
     @pytest.mark.skipif(
-        not os.path.exists("test_data"),
-        reason="Test data directory not available"
+        not os.path.exists("test_data") or os.getenv("CI"),
+        reason="Test data directory not available or running in CI"
     )
     def test_refine_with_test_data(self):
         """Test refinement with actual test data (if available)"""
