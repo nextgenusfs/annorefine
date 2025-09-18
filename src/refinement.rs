@@ -1492,3 +1492,5 @@ fn is_valid_donor_site(motif: &str) -> bool {
 fn is_valid_acceptor_site(motif: &str) -> bool {
     matches!(motif, "AG" | "AC")
 }
+
+
