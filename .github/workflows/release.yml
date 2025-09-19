@@ -29,6 +29,10 @@ jobs:
             python-version: "3.11"
           - os: macos-latest
             python-version: "3.12"
+          - os: ubuntu-latest
+            python-version: "3.13"
+          - os: macos-latest
+            python-version: "3.13"
 
     steps:
     - uses: actions/checkout@v4
@@ -121,11 +125,26 @@ jobs:
     - name: Build binary
       run: cargo build --release
 
-    - name: Upload binary
+    - name: Rename binary for release
+      run: |
+        if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+          cp target/release/annorefine annorefine-linux-x86_64
+        else
+          cp target/release/annorefine annorefine-macos-arm64
+        fi
+
+    - name: Upload binary to release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: ./annorefine-${{ matrix.os == 'ubuntu-latest' && 'linux-x86_64' || 'macos-arm64' }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Upload binary artifact (backup)
       uses: actions/upload-artifact@v4
       with:
         name: binary-${{ matrix.os }}
-        path: target/release/annorefine
+        path: annorefine-${{ matrix.os == 'ubuntu-latest' && 'linux-x86_64' || 'macos-arm64' }}
 
   release-github:
     name: Create GitHub Release
@@ -190,9 +209,6 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
             name: annorefine-macos-aarch64
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            name: annorefine-windows-x86_64.exe
 
     steps:
     - uses: actions/checkout@v4
@@ -221,11 +237,6 @@ jobs:
       run: |
         cp target/${{ matrix.target }}/release/annorefine ${{ matrix.name }}
         chmod +x ${{ matrix.name }}
-
-    - name: Prepare binary (Windows)
-      if: matrix.os == 'windows-latest'
-      run: |
-        copy target\${{ matrix.target }}\release\annorefine.exe ${{ matrix.name }}
 
     - name: Upload binary
       uses: actions/upload-artifact@v4
