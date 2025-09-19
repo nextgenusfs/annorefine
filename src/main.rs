@@ -102,7 +102,7 @@ fn main() -> Result<()> {
         );
     }
 
-    info!("Starting AnnoRefine v2025.1.0");
+    info!("Starting AnnoRefine v{}", env!("CARGO_PKG_VERSION"));
     info!("Input FASTA: {}", args.fasta_file.display());
     info!("Input GFF3: {}", args.gff3_file.display());
     info!("Input BAM: {}", args.bam_file.display());

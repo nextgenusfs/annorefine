@@ -26,7 +26,7 @@ impl Gff3Writer {
 
         // Write GFF3 header
         writeln!(writer, "##gff-version 3")?;
-        writeln!(writer, "##generated-by annorefine v2025.1.0")?;
+        writeln!(writer, "##generated-by annorefine v{}", env!("CARGO_PKG_VERSION"))?;
 
         Ok(Gff3Writer { writer })
     }
