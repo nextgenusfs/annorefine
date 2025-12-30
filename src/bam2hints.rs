@@ -948,7 +948,7 @@ mod tests {
         assert_eq!(config.min_intron_len, 32);
         assert_eq!(config.max_intron_len, 350000);
         assert_eq!(config.source, "E");
-        assert!(!config.introns_only);
+        assert!(config.introns_only); // Default is true for Rust (CLI default)
         assert!(!config.no_multiplicity);
     }
 }
