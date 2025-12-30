@@ -1,6 +1,6 @@
 [package]
 name = "annorefine"
-version = "2025.12.30"
+version = "2025.12.31"
 edition = "2021"
 description = "Genome annotation refinement toolkit using RNA-seq data"
 license = "MIT"
