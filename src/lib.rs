@@ -4,8 +4,10 @@
 //! RNA-seq alignment evidence to improve gene model predictions.
 
 pub mod bam;
+pub mod bam2hints;
 pub mod fasta;
 pub mod gff3;
+pub mod hints_output;
 pub mod logging;
 pub mod output;
 pub mod refinement;

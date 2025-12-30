@@ -170,6 +170,54 @@ class TestAnnoRefine:
         config = annorefine.RefinementConfig(validate_splice_sites=False)
         assert config.validate_splice_sites == False
 
+    def test_strand_detection_config(self):
+        """Test strand detection configuration parameters"""
+        # Test default values
+        config = annorefine.RefinementConfig()
+        assert config.strand_bias_threshold == 0.65
+        assert config.max_reads_for_strand_detection == 10000
+
+        # Test custom values
+        config = annorefine.RefinementConfig(
+            strand_bias_threshold=0.8,
+            max_reads_for_strand_detection=5000
+        )
+        assert config.strand_bias_threshold == 0.8
+        assert config.max_reads_for_strand_detection == 5000
+
+    def test_refine_with_strand_parameters(self):
+        """Test that refine function accepts strand detection parameters"""
+        test_data_dir = Path("test_data")
+        if not test_data_dir.exists():
+            pytest.skip("Test data directory not found")
+
+        fasta_file = test_data_dir / "Pverrucosus.fa"
+        gff3_file = test_data_dir / "Pverrucosus.gff3"
+        bam_file = test_data_dir / "Pverr.bam"
+
+        if not all(f.exists() for f in [fasta_file, gff3_file, bam_file]):
+            pytest.skip("Required test files not found")
+
+        with tempfile.NamedTemporaryFile(suffix=".gff3", delete=False) as tmp:
+            try:
+                # Test with custom strand detection parameters
+                result = annorefine.refine(
+                    fasta_file=str(fasta_file),
+                    gff3_file=str(gff3_file),
+                    bam_file=str(bam_file),
+                    output_file=tmp.name,
+                    strand_bias_threshold=0.7,
+                    max_reads_for_strand_detection=1000
+                )
+
+                # Should complete without error
+                assert isinstance(result, dict)
+                assert "genes_processed" in result
+
+            finally:
+                if os.path.exists(tmp.name):
+                    os.unlink(tmp.name)
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

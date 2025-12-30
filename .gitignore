@@ -40,3 +40,10 @@ test_interrupt_output.gff3
 venv/
 test_fixes.py
 test_interrupt.py
+
+# Documentation
+site/
+.cache/
+
+# Test directories
+test_*/

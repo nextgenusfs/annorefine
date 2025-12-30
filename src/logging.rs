@@ -50,7 +50,7 @@ impl log::Log for AnnoRefineLogger {
             return;
         }
 
-        let timestamp = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ");
+        let timestamp = chrono::Utc::now().format("%H:%M:%S");
         let level = record.level();
         let target = record.target();
         let message = record.args();

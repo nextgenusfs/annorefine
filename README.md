@@ -1,21 +1,18 @@
-# AnnoRefine
+# Annorefine
 
 [![CI](https://github.com/nextgenusfs/annorefine/workflows/CI/badge.svg)](https://github.com/nextgenusfs/annorefine/actions)
-[![PyPI version](https://badge.fury.io/py/annorefine.svg)](https://badge.fury.io/py/annorefine)
-[![Python versions](https://img.shields.io/pypi/pyversions/annorefine.svg)](https://pypi.org/project/annorefine/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**High-performance genome annotation refinement using RNA-seq data**
+**Genome annotation refinement toolkit using RNA-seq data**
 
-AnnoRefine is a fast, accurate tool for improving genome annotations by incorporating RNA-seq evidence. It refines gene models by extending UTRs, adjusting splice sites, and optionally detecting novel genes. Available as both a Python package and standalone command-line tool.
+Annorefine is a high-performance toolkit for refining genome annotations using RNA-seq evidence. Built in Rust for maximum performance and reliability.
 
 ## Table of Contents
 
 - [Features](#features)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
-- [Python API Reference](#python-api-reference)
-- [Command Line Reference](#command-line-reference)
+- [Subcommands](#subcommands)
 - [Input Requirements](#input-requirements)
 - [Algorithm Overview](#algorithm-overview)
 - [Performance & Scalability](#performance--scalability)
@@ -26,13 +23,23 @@ AnnoRefine is a fast, accurate tool for improving genome annotations by incorpor
 
 ## Features
 
-- 🧬 **UTR Extension**: Extend 5' and 3' UTRs based on RNA-seq coverage
-- 🔀 **Splice Site Refinement**: Adjust intron/exon boundaries using splice junction evidence
-- 🆕 **Novel Gene Detection**: Discover new genes from RNA-seq data
+### 🔧 **annorefine utrs** - RNA-seq-based Annotation Refinement
+- 🧬 **UTR Extension & Trimming**: Intelligently extends and trims UTRs based on RNA-seq coverage
+- 🔀 **Splice Site Refinement**: Adjusts splice sites using junction evidence from alignments
+- 🆕 **Novel Gene Detection**: Optionally identifies new genes from RNA-seq evidence
+- 🧭 **Comprehensive Strand Support**: Handles all RNA-seq library types (F, R, U, RF, FR, UU)
 - ⚡ **High Performance**: Multi-threaded processing with Rust backend
-- 🐍 **Python Integration**: Full Python API for bioinformatics workflows
-- 🔧 **Flexible Configuration**: Extensive customization options
 - ✅ **Robust Validation**: Ensures all refined models remain structurally valid
+
+### 🎯 **annorefine bam2hints** - BAM to Augustus Hints Conversion
+- 🔍 **Splice Junction Detection**: Extracts intron hints from RNA-seq alignments
+- 📊 **Exon/Exonpart Hints**: Generates exon and exonpart hints for gene prediction
+- 🧬 **Splice Site Hints**: Identifies donor and acceptor splice sites
+- 📈 **Multiplicity Support**: Counts supporting reads for each hint
+- 🎛️ **Configurable Filtering**: Adjustable parameters for gap lengths, coverage, and quality
+- 📝 **Augustus Compatible**: Outputs hints in standard Augustus GFF format
+
+
 
 ## Installation
 
@@ -91,14 +98,112 @@ print(f"Novel genes detected: {result['novel_genes_detected']}")
 
 ### Command Line
 
-```bash
-# Basic refinement
-annorefine --fasta genome.fasta --gff3 annotations.gff3 --bam alignments.bam --output refined.gff3
+AnnoRefine provides annotation refinement using RNA-seq evidence:
 
-# With custom parameters
-annorefine --fasta genome.fasta --gff3 annotations.gff3 --bam alignments.bam --output refined.gff3 \
-    --min-coverage 10 --detect-novel-genes --threads 8 --verbose
+#### 🔧 Refine Existing Annotations
+
+```bash
+# Basic refinement with auto-detected library type
+annorefine utrs \
+    --fasta genome.fa \
+    --gff3 annotations.gff3 \
+    --bam alignments.bam \
+    --output refined_annotations.gff3
+
+# Specify library type for better accuracy
+annorefine utrs \
+    --fasta genome.fa \
+    --gff3 annotations.gff3 \
+    --bam alignments.bam \
+    --output refined_annotations.gff3 \
+    --stranded RF \
+    --detect-novel-genes \
+    --verbose
+
+#### 🎯 Generate Augustus Hints
+
+```bash
+# Convert BAM alignments to Augustus hints
+annorefine bam2hints \
+    --in alignments.bam \
+    --out hints.gff \
+    --priority 4 \
+    --source E
+
+# Generate comprehensive hints for gene prediction
+annorefine bam2hints \
+    --in alignments.bam \
+    --out hints.gff \
+    --exonhints \
+    --ssOn \
+    --maxcoverage 1000 \
+    --verbose
 ```
+
+
+
+## Subcommands
+
+### annorefine utrs
+
+The `utrs` subcommand improves existing gene annotations using RNA-seq evidence:
+
+**Key Features:**
+- **UTR Extension & Trimming**: Extends or trims UTRs based on RNA-seq coverage patterns
+- **Splice Site Refinement**: Adjusts intron boundaries using splice junction evidence
+- **Novel Gene Detection**: Optionally discovers new genes from RNA-seq data
+- **Strand-Aware Processing**: Supports all RNA-seq library types (F, R, U, RF, FR, UU)
+
+**Library Type Support:**
+- `auto` - Auto-detect library type (default)
+- `F` - Single-end forward stranded
+- `R` - Single-end reverse stranded
+- `U` - Single-end unstranded
+- `RF` - Paired-end reverse/forward
+- `FR` - Paired-end forward/reverse
+- `UU` - Paired-end unstranded
+
+### annorefine bam2hints
+
+The `bam2hints` subcommand converts BAM alignments into hints for Augustus gene prediction:
+
+**Key Features:**
+- **Intron Hint Generation**: Extracts splice junctions from RNA-seq alignments
+- **Exon/Exonpart Hints**: Generates hints for exon boundaries and internal exons
+- **Splice Site Detection**: Identifies donor and acceptor splice sites
+- **Multiplicity Counting**: Aggregates identical hints with support counts
+- **Coverage Filtering**: Limits hints in high-coverage regions to prevent overload
+- **Augustus Compatibility**: Outputs standard Augustus GFF format
+
+**Basic Usage:**
+```bash
+# Generate intron hints only (default)
+annorefine bam2hints --in alignments.bam --out hints.gff
+
+# Generate all hint types
+annorefine bam2hints --in alignments.bam --out hints.gff --exonhints --ssOn
+
+# Custom parameters
+annorefine bam2hints \
+    --in alignments.bam \
+    --out hints.gff \
+    --priority 5 \
+    --source RNA \
+    --minintronlen 50 \
+    --maxintronlen 500000 \
+    --maxcoverage 1000
+```
+
+**Important Parameters:**
+- `--priority`: Priority level for hints (default: 4)
+- `--source`: Source identifier for hints (default: E)
+- `--minintronlen`: Minimum intron length (default: 32)
+- `--maxintronlen`: Maximum intron length (default: 350000)
+- `--maxcoverage`: Maximum hints per position (default: 0 = unlimited)
+- `--exonhints`: Enable exon and exonpart hints
+- `--ssOn`: Enable splice site hints
+
+
 
 ## Python API Reference
 

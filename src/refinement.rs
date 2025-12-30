@@ -3,7 +3,7 @@
 use crate::bam::BamReader;
 use crate::types::{
     AlignmentCluster, AnnoRefineError, Exon, GeneModel, Genome, GenomicInterval, RefinementConfig,
-    Result, SpliceJunction, Strand, Transcript,
+    Result, SpliceJunction, Strand, StrandBias, Transcript,
 };
 
 use crate::logging::{log_gene_model_changes, log_splice_junction_refinement, log_utr_extension};
@@ -28,6 +28,22 @@ impl RefinementEngine {
         gene_models: &mut Vec<GeneModel>,
         bam_file_path: &std::path::Path,
         genome: &Genome,
+    ) -> Result<RefinementSummary> {
+        self.refine_gene_models_with_strand_bias(
+            gene_models,
+            bam_file_path,
+            genome,
+            StrandBias::Unstranded,
+        )
+    }
+
+    /// Refine a collection of gene models using RNA-seq evidence with strand bias information
+    pub fn refine_gene_models_with_strand_bias(
+        &self,
+        gene_models: &mut Vec<GeneModel>,
+        bam_file_path: &std::path::Path,
+        genome: &Genome,
+        strand_bias: StrandBias,
     ) -> Result<RefinementSummary> {
         info!(
             "Starting gene model refinement for {} genes",
@@ -54,12 +70,13 @@ impl RefinementEngine {
         let chromosome_results: Result<Vec<_>> = genes_by_chromosome
             .par_iter()
             .map(|(chromosome, gene_indices)| {
-                self.refine_genes_on_chromosome(
+                self.refine_genes_on_chromosome_with_strand_bias(
                     gene_models,
                     gene_indices,
                     chromosome,
                     bam_file_path,
                     genome,
+                    strand_bias,
                 )
             })
             .collect();
@@ -105,6 +122,7 @@ impl RefinementEngine {
     }
 
     /// Refine genes on a single chromosome
+    #[allow(dead_code)]
     fn refine_genes_on_chromosome(
         &self,
         gene_models: &[GeneModel],
@@ -151,7 +169,61 @@ impl RefinementEngine {
         Ok((refined_genes, summary))
     }
 
+    /// Refine genes on a single chromosome with strand bias information
+    fn refine_genes_on_chromosome_with_strand_bias(
+        &self,
+        gene_models: &[GeneModel],
+        gene_indices: &[usize],
+        chromosome: &str,
+        bam_file_path: &std::path::Path,
+        genome: &Genome,
+        strand_bias: StrandBias,
+    ) -> Result<(Vec<(usize, GeneModel)>, RefinementSummary)> {
+        debug!(
+            "Processing chromosome {} with {} genes (strand bias: {})",
+            chromosome,
+            gene_indices.len(),
+            strand_bias
+        );
+
+        // Create a separate BAM reader for this thread
+        let mut bam_reader = BamReader::new(bam_file_path)?;
+        let mut summary = RefinementSummary::new();
+        let mut refined_genes = Vec::new();
+
+        // Process each gene on this chromosome
+        for &gene_index in gene_indices {
+            // Work with a mutable copy
+            let mut gene_model = gene_models[gene_index].clone();
+
+            match self.refine_single_gene_with_strand_bias(
+                &mut gene_model,
+                &mut bam_reader,
+                genome,
+                strand_bias,
+            ) {
+                Ok(gene_summary) => {
+                    summary.merge(gene_summary);
+                    refined_genes.push((gene_index, gene_model));
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to refine gene {} on chromosome {}: {}",
+                        gene_model.id, chromosome, e
+                    );
+
+                    // Keep the original gene model if refinement failed
+                    refined_genes.push((gene_index, gene_model));
+                }
+            }
+        }
+
+        debug!("Completed chromosome {} processing", chromosome);
+        Ok((refined_genes, summary))
+    }
+
     /// Refine a single gene model
+    #[allow(dead_code)]
     fn refine_single_gene(
         &self,
         gene_model: &mut GeneModel,
@@ -166,8 +238,8 @@ impl RefinementEngine {
         let gene_interval = gene_model.interval();
         let extended_interval = self.extend_interval_for_analysis(&gene_interval);
 
-        let splice_junctions = bam_reader.get_splice_junctions_in_region(&extended_interval)?;
-        let coverage = bam_reader.get_coverage_in_region(&extended_interval)?;
+        let splice_junctions = bam_reader.get_splice_junctions_in_region_with_library_type(&extended_interval, self.config.library_type)?;
+        let coverage = bam_reader.get_coverage_in_region_with_library_type(&extended_interval, self.config.library_type)?;
 
         // Track if any transcript has structural changes
         let mut gene_has_structural_changes = false;
@@ -205,7 +277,64 @@ impl RefinementEngine {
         Ok(summary)
     }
 
+    /// Refine a single gene model with strand bias information
+    fn refine_single_gene_with_strand_bias(
+        &self,
+        gene_model: &mut GeneModel,
+        bam_reader: &mut BamReader,
+        genome: &Genome,
+        strand_bias: StrandBias,
+    ) -> Result<RefinementSummary> {
+        debug!("Refining gene: {} (strand bias: {})", gene_model.id, strand_bias);
+
+        let mut summary = RefinementSummary::new();
+
+        // Get RNA-seq evidence for the gene region
+        let gene_interval = gene_model.interval();
+        let extended_interval = self.extend_interval_for_analysis(&gene_interval);
+
+        let splice_junctions = bam_reader.get_splice_junctions_in_region_with_library_type(&extended_interval, self.config.library_type)?;
+        let coverage = bam_reader.get_coverage_in_region_with_library_type(&extended_interval, self.config.library_type)?;
+
+        // Track if any transcript has structural changes
+        let mut gene_has_structural_changes = false;
+
+        // Refine each transcript
+        for transcript in &mut gene_model.transcripts {
+            let transcript_summary = self.refine_transcript_with_strand_bias(
+                transcript,
+                &splice_junctions,
+                &coverage,
+                &extended_interval,
+                genome,
+                &gene_model.chromosome,
+                gene_model.strand,
+                &gene_model.id, // Pass gene ID for logging
+                strand_bias,
+            )?;
+
+            // Check if this transcript had structural changes
+            if transcript_summary.transcripts_with_structure_changes > 0 {
+                gene_has_structural_changes = true;
+            }
+
+            summary.merge(transcript_summary);
+        }
+
+        // Mark gene if any transcript had structural changes
+        if gene_has_structural_changes {
+            gene_model.has_structural_changes = true;
+            debug!("Gene {} marked as having structural changes", gene_model.id);
+        }
+
+        // Update gene boundaries based on refined transcripts
+        gene_model.update_boundaries();
+
+        Ok(summary)
+    }
+
     /// Refine a single transcript
+    #[allow(dead_code)]
     fn refine_transcript(
         &self,
         transcript: &mut Transcript,
@@ -226,8 +355,15 @@ impl RefinementEngine {
         let structure_changed =
             self.refine_exon_structure(transcript, splice_junctions, gene_id, genome)?;
 
-        // 2. Extend UTRs based on coverage (extend gene model first)
-        let utr_changes = self.extend_utrs(transcript, coverage, region, gene_id)?;
+        // 2. Refine UTRs based on coverage with splice junction awareness (includes trimming)
+        let (utr_changes, utr_trimming) = self.refine_utrs_with_splice_junctions(
+            transcript,
+            splice_junctions,
+            coverage,
+            region,
+            gene_id,
+            strand,
+        )?;
 
         // 3. Re-predict CDS in the extended gene model
         // This may result in the same CDS, longer CDS, or completely different CDS
@@ -250,7 +386,96 @@ impl RefinementEngine {
         if utr_changes.three_prime_extended {
             summary.transcripts_with_3utr_extension += 1;
         }
+        if utr_trimming.five_prime_trimmed {
+            summary.transcripts_with_5utr_trimming += 1;
+        }
+        if utr_trimming.three_prime_trimmed {
+            summary.transcripts_with_3utr_trimming += 1;
+        }
         if cds_changed {
+            debug!("CDS re-predicted for transcript {}", transcript.id);
+        }
+
+        // Update transcript boundaries
+        transcript.update_boundaries();
+
+        Ok(summary)
+    }
+
+    /// Refine a single transcript with strand bias information
+    fn refine_transcript_with_strand_bias(
+        &self,
+        transcript: &mut Transcript,
+        splice_junctions: &[SpliceJunction],
+        coverage: &[u32],
+        region: &GenomicInterval,
+        genome: &Genome,
+        chromosome: &str,
+        strand: Strand,
+        gene_id: &str,
+        strand_bias: StrandBias,
+    ) -> Result<RefinementSummary> {
+        let mut summary = RefinementSummary::new();
+
+        // Store original transcript for CDS validation
+        let _original_transcript = transcript.clone();
+
+        // Filter splice junctions based on strand bias if data is stranded
+        let filtered_splice_junctions = self.filter_splice_junctions_by_strand(
+            splice_junctions,
+            strand,
+            strand_bias,
+        );
+
+        // 1. Refine intron/exon structure based on strand-filtered splice junctions
+        let structure_changed = self.refine_exon_structure_with_strand_bias(
+            transcript,
+            &filtered_splice_junctions,
+            gene_id,
+            genome,
+            strand,
+            strand_bias,
+        )?;
+
+        // 2. Refine UTRs based on coverage with splice junction awareness (includes trimming)
+        let (utr_changes, utr_trimming) = self.refine_utrs_with_splice_junctions(
+            transcript,
+            &filtered_splice_junctions,
+            coverage,
+            region,
+            gene_id,
+            strand,
+        )?;
+
+        // 3. Re-predict CDS in the extended gene model
+        // This may result in the same CDS, longer CDS, or completely different CDS
+        let cds_changed = if structure_changed
+            || utr_changes.five_prime_extended
+            || utr_changes.three_prime_extended
+        {
+            self.re_predict_cds(transcript, genome, chromosome, strand, gene_id)?
+        } else {
+            false
+        };
+
+        // Update summary
+        if structure_changed {
+            summary.transcripts_with_structure_changes += 1;
+        }
+        if utr_changes.five_prime_extended {
+            summary.transcripts_with_5utr_extension += 1;
+        }
+        if utr_changes.three_prime_extended {
+            summary.transcripts_with_3utr_extension += 1;
+        }
+        if utr_trimming.five_prime_trimmed {
+            summary.transcripts_with_5utr_trimming += 1;
+        }
+        if utr_trimming.three_prime_trimmed {
+            summary.transcripts_with_3utr_trimming += 1;
+        }
+        if cds_changed {
+            summary.transcripts_with_structure_changes += 1; // CDS changes are structural changes
             debug!("CDS re-predicted for transcript {}", transcript.id);
         }
 
@@ -485,17 +710,19 @@ impl RefinementEngine {
         Ok(dynamic_threshold)
     }
 
-    /// Extend UTRs based on coverage evidence
-    fn extend_utrs(
+    /// Extend and trim UTRs based on coverage evidence with splice junction awareness
+    fn refine_utrs(
         &self,
         transcript: &mut Transcript,
         coverage: &[u32],
         region: &GenomicInterval,
         gene_id: &str,
-    ) -> Result<UtrExtensionResult> {
-        let mut result = UtrExtensionResult {
+    ) -> Result<UtrRefinementResult> {
+        let mut result = UtrRefinementResult {
             five_prime_extended: false,
             three_prime_extended: false,
+            five_prime_trimmed: false,
+            three_prime_trimmed: false,
         };
 
         if transcript.exons.is_empty() {
@@ -508,55 +735,83 @@ impl RefinementEngine {
 
         // Determine transcript orientation
         let is_forward = region.strand == Strand::Forward;
+        const MIN_CHANGE_LENGTH: u64 = 5; // Minimum length for both extensions and trims
 
-        // Extend 5' UTR
-        let five_prime_extension = if is_forward {
-            self.find_upstream_extension(transcript, coverage, region, dynamic_threshold)?
+        // First, check if existing UTRs should be trimmed based on lack of coverage support
+        let five_prime_trim = self.find_utr_trim_needed(
+            transcript,
+            coverage,
+            region,
+            dynamic_threshold,
+            is_forward,
+            true // is_five_prime
+        )?;
+
+        // Apply 5' UTR trimming if needed
+        if five_prime_trim >= MIN_CHANGE_LENGTH {
+            self.apply_five_prime_trim(transcript, five_prime_trim, is_forward, gene_id)?;
+            result.five_prime_trimmed = true;
+            debug!(
+                "Trimmed 5' UTR for transcript {} by {} bp due to insufficient coverage (threshold {})",
+                transcript.id, five_prime_trim, dynamic_threshold
+            );
         } else {
-            self.find_downstream_extension(transcript, coverage, region, dynamic_threshold)?
-        };
+            // Only extend if we didn't trim
+            let five_prime_extension = if is_forward {
+                self.find_upstream_extension(transcript, coverage, region, dynamic_threshold)?
+            } else {
+                self.find_downstream_extension(transcript, coverage, region, dynamic_threshold)?
+            };
 
-        // Only apply extensions that are meaningful (>= 5bp to avoid noise)
-        const MIN_EXTENSION_LENGTH: u64 = 5;
-
-        if five_prime_extension >= MIN_EXTENSION_LENGTH {
-            self.apply_five_prime_extension(transcript, five_prime_extension, is_forward, gene_id)?;
-            result.five_prime_extended = true;
-            debug!(
-                "Extended 5' UTR for transcript {} by {} bp using threshold {}",
-                transcript.id, five_prime_extension, dynamic_threshold
-            );
-        } else if five_prime_extension > 0 {
-            debug!(
-                "Skipped 5' UTR extension for transcript {} ({} bp < {} bp minimum)",
-                transcript.id, five_prime_extension, MIN_EXTENSION_LENGTH
-            );
+            if five_prime_extension >= MIN_CHANGE_LENGTH {
+                self.apply_five_prime_extension(transcript, five_prime_extension, is_forward, gene_id)?;
+                result.five_prime_extended = true;
+                debug!(
+                    "Extended 5' UTR for transcript {} by {} bp using threshold {}",
+                    transcript.id, five_prime_extension, dynamic_threshold
+                );
+            }
         }
 
-        // Extend 3' UTR
-        let three_prime_extension = if is_forward {
-            self.find_downstream_extension(transcript, coverage, region, dynamic_threshold)?
-        } else {
-            self.find_upstream_extension(transcript, coverage, region, dynamic_threshold)?
-        };
+        // Check if 3' UTR should be trimmed
+        let three_prime_trim = self.find_utr_trim_needed(
+            transcript,
+            coverage,
+            region,
+            dynamic_threshold,
+            is_forward,
+            false // is_five_prime
+        )?;
 
-        if three_prime_extension >= MIN_EXTENSION_LENGTH {
-            self.apply_three_prime_extension(
-                transcript,
-                three_prime_extension,
-                is_forward,
-                gene_id,
-            )?;
-            result.three_prime_extended = true;
+        // Apply 3' UTR trimming if needed
+        if three_prime_trim >= MIN_CHANGE_LENGTH {
+            self.apply_three_prime_trim(transcript, three_prime_trim, is_forward, gene_id)?;
+            result.three_prime_trimmed = true;
             debug!(
-                "Extended 3' UTR for transcript {} by {} bp using threshold {}",
-                transcript.id, three_prime_extension, dynamic_threshold
+                "Trimmed 3' UTR for transcript {} by {} bp due to insufficient coverage (threshold {})",
+                transcript.id, three_prime_trim, dynamic_threshold
             );
-        } else if three_prime_extension > 0 {
-            debug!(
-                "Skipped 3' UTR extension for transcript {} ({} bp < {} bp minimum)",
-                transcript.id, three_prime_extension, MIN_EXTENSION_LENGTH
-            );
+        } else {
+            // Only extend if we didn't trim
+            let three_prime_extension = if is_forward {
+                self.find_downstream_extension(transcript, coverage, region, dynamic_threshold)?
+            } else {
+                self.find_upstream_extension(transcript, coverage, region, dynamic_threshold)?
+            };
+
+            if three_prime_extension >= MIN_CHANGE_LENGTH {
+                self.apply_three_prime_extension(
+                    transcript,
+                    three_prime_extension,
+                    is_forward,
+                    gene_id,
+                )?;
+                result.three_prime_extended = true;
+                debug!(
+                    "Extended 3' UTR for transcript {} by {} bp using threshold {}",
+                    transcript.id, three_prime_extension, dynamic_threshold
+                );
+            }
         }
 
         Ok(result)
@@ -740,6 +995,478 @@ impl RefinementEngine {
         Ok(())
     }
 
+    /// Find how much of existing UTR should be trimmed due to lack of coverage support
+    fn find_utr_trim_needed(
+        &self,
+        transcript: &Transcript,
+        coverage: &[u32],
+        region: &GenomicInterval,
+        coverage_threshold: u32,
+        is_forward: bool,
+        is_five_prime: bool,
+    ) -> Result<u64> {
+        if transcript.exons.is_empty() {
+            return Ok(0);
+        }
+
+        // Determine which end of the transcript to analyze
+        let (utr_start, utr_end) = if is_five_prime {
+            if is_forward {
+                // 5' UTR is at the beginning of forward strand transcript
+                (transcript.start, transcript.exons[0].end)
+            } else {
+                // 5' UTR is at the end of reverse strand transcript
+                let last_idx = transcript.exons.len() - 1;
+                (transcript.exons[last_idx].start, transcript.end)
+            }
+        } else {
+            if is_forward {
+                // 3' UTR is at the end of forward strand transcript
+                let last_idx = transcript.exons.len() - 1;
+                (transcript.exons[last_idx].start, transcript.end)
+            } else {
+                // 3' UTR is at the beginning of reverse strand transcript
+                (transcript.start, transcript.exons[0].end)
+            }
+        };
+
+        // Convert to coverage array indices
+        let region_start = region.start;
+        if utr_start < region_start || utr_end < region_start {
+            return Ok(0);
+        }
+
+        let start_offset = (utr_start - region_start) as usize;
+        let end_offset = (utr_end - region_start) as usize;
+
+        if start_offset >= coverage.len() || end_offset >= coverage.len() {
+            return Ok(0);
+        }
+
+        // Look for consecutive positions with insufficient coverage from the UTR boundary inward
+        let mut trim_needed = 0;
+        let mut consecutive_low_coverage = 0;
+        const MAX_LOW_COVERAGE_GAP: usize = 3; // Allow small gaps in coverage
+
+        // Determine direction to scan based on UTR type and strand
+        let scan_inward = if is_five_prime {
+            is_forward // For 5' UTR: forward strand scans left-to-right, reverse scans right-to-left
+        } else {
+            !is_forward // For 3' UTR: forward strand scans right-to-left, reverse scans left-to-right
+        };
+
+        if scan_inward {
+            // Scan from start toward end
+            for i in start_offset..end_offset {
+                if coverage[i] < coverage_threshold {
+                    trim_needed += 1;
+                    consecutive_low_coverage += 1;
+                } else {
+                    // If we hit good coverage, stop trimming (we only trim from the boundary)
+                    break;
+                }
+
+                // Don't trim too aggressively - stop if we hit a long stretch of low coverage
+                if consecutive_low_coverage > MAX_LOW_COVERAGE_GAP {
+                    break;
+                }
+            }
+        } else {
+            // Scan from end toward start
+            for i in (start_offset..end_offset).rev() {
+                if coverage[i] < coverage_threshold {
+                    trim_needed += 1;
+                    consecutive_low_coverage += 1;
+                } else {
+                    // If we hit good coverage, stop trimming
+                    break;
+                }
+
+                if consecutive_low_coverage > MAX_LOW_COVERAGE_GAP {
+                    break;
+                }
+            }
+        }
+
+        Ok(trim_needed as u64)
+    }
+
+    /// Apply 5' UTR trimming
+    fn apply_five_prime_trim(
+        &self,
+        transcript: &mut Transcript,
+        trim_length: u64,
+        is_forward: bool,
+        gene_id: &str,
+    ) -> Result<()> {
+        if transcript.exons.is_empty() || trim_length == 0 {
+            return Ok(());
+        }
+
+        if is_forward {
+            // Trim first exon from upstream end (move start downstream)
+            let original_start = transcript.exons[0].start;
+            transcript.exons[0].start = transcript.exons[0].start + trim_length;
+
+            // Ensure we don't trim past the exon end
+            if transcript.exons[0].start >= transcript.exons[0].end {
+                transcript.exons[0].start = transcript.exons[0].end.saturating_sub(1);
+            }
+
+            let actual_trim = transcript.exons[0].start - original_start;
+            if actual_trim > 0 {
+                debug!(
+                    "Trimmed 5' UTR for transcript {} (gene {}) by {} bp: {} -> {}",
+                    transcript.id, gene_id, actual_trim, original_start, transcript.exons[0].start
+                );
+            }
+        } else {
+            // Trim last exon from downstream end (move end upstream)
+            let last_idx = transcript.exons.len() - 1;
+            let original_end = transcript.exons[last_idx].end;
+            transcript.exons[last_idx].end = transcript.exons[last_idx].end.saturating_sub(trim_length);
+
+            // Ensure we don't trim past the exon start
+            if transcript.exons[last_idx].end <= transcript.exons[last_idx].start {
+                transcript.exons[last_idx].end = transcript.exons[last_idx].start + 1;
+            }
+
+            let actual_trim = original_end - transcript.exons[last_idx].end;
+            if actual_trim > 0 {
+                debug!(
+                    "Trimmed 5' UTR for transcript {} (gene {}) by {} bp: {} -> {}",
+                    transcript.id, gene_id, actual_trim, original_end, transcript.exons[last_idx].end
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Apply 3' UTR trimming
+    fn apply_three_prime_trim(
+        &self,
+        transcript: &mut Transcript,
+        trim_length: u64,
+        is_forward: bool,
+        gene_id: &str,
+    ) -> Result<()> {
+        if transcript.exons.is_empty() || trim_length == 0 {
+            return Ok(());
+        }
+
+        if is_forward {
+            // Trim last exon from downstream end (move end upstream)
+            let last_idx = transcript.exons.len() - 1;
+            let original_end = transcript.exons[last_idx].end;
+            transcript.exons[last_idx].end = transcript.exons[last_idx].end.saturating_sub(trim_length);
+
+            // Ensure we don't trim past the exon start
+            if transcript.exons[last_idx].end <= transcript.exons[last_idx].start {
+                transcript.exons[last_idx].end = transcript.exons[last_idx].start + 1;
+            }
+
+            let actual_trim = original_end - transcript.exons[last_idx].end;
+            if actual_trim > 0 {
+                debug!(
+                    "Trimmed 3' UTR for transcript {} (gene {}) by {} bp: {} -> {}",
+                    transcript.id, gene_id, actual_trim, original_end, transcript.exons[last_idx].end
+                );
+            }
+        } else {
+            // Trim first exon from upstream end (move start downstream)
+            let original_start = transcript.exons[0].start;
+            transcript.exons[0].start = transcript.exons[0].start + trim_length;
+
+            // Ensure we don't trim past the exon end
+            if transcript.exons[0].start >= transcript.exons[0].end {
+                transcript.exons[0].start = transcript.exons[0].end.saturating_sub(1);
+            }
+
+            let actual_trim = transcript.exons[0].start - original_start;
+            if actual_trim > 0 {
+                debug!(
+                    "Trimmed 3' UTR for transcript {} (gene {}) by {} bp: {} -> {}",
+                    transcript.id, gene_id, actual_trim, original_start, transcript.exons[0].start
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Refine UTRs with splice junction awareness (includes both trimming and extension)
+    fn refine_utrs_with_splice_junctions(
+        &self,
+        transcript: &mut Transcript,
+        splice_junctions: &[SpliceJunction],
+        coverage: &[u32],
+        region: &GenomicInterval,
+        gene_id: &str,
+        strand: Strand,
+    ) -> Result<(UtrExtensionResult, UtrRefinementResult)> {
+        // First, perform basic UTR refinement (trimming + simple extension)
+        let refinement_result = self.refine_utrs(transcript, coverage, region, gene_id)?;
+
+        // Convert refinement result to extension result for backward compatibility
+        let mut extension_result = UtrExtensionResult {
+            five_prime_extended: refinement_result.five_prime_extended,
+            three_prime_extended: refinement_result.three_prime_extended,
+        };
+
+        if transcript.exons.is_empty() {
+            return Ok((extension_result, refinement_result));
+        }
+
+        // If we already extended via basic refinement, skip splice junction extensions
+        // to avoid double-extending. Only do splice junction extensions if basic didn't extend.
+        if extension_result.five_prime_extended || extension_result.three_prime_extended {
+            debug!(
+                "Skipping splice junction extensions for transcript {} - already extended via basic refinement",
+                transcript.id
+            );
+            return Ok((extension_result, refinement_result));
+        }
+
+        // Calculate dynamic coverage threshold based on existing exons
+        let dynamic_threshold =
+            self.calculate_dynamic_coverage_threshold(transcript, coverage, region)?;
+
+        let is_forward = strand == Strand::Forward;
+
+        // Extend 5' UTR with splice junction awareness
+        let five_prime_result = self.extend_five_prime_utr_with_junctions(
+            transcript,
+            splice_junctions,
+            coverage,
+            region,
+            dynamic_threshold,
+            is_forward,
+            gene_id,
+        )?;
+
+        if five_prime_result {
+            extension_result.five_prime_extended = true;
+        }
+
+        // Extend 3' UTR with splice junction awareness
+        let three_prime_result = self.extend_three_prime_utr_with_junctions(
+            transcript,
+            splice_junctions,
+            coverage,
+            region,
+            dynamic_threshold,
+            is_forward,
+            gene_id,
+        )?;
+
+        if three_prime_result {
+            extension_result.three_prime_extended = true;
+        }
+
+        Ok((extension_result, refinement_result))
+    }
+
+    /// Extend 5' UTR with splice junction awareness
+    fn extend_five_prime_utr_with_junctions(
+        &self,
+        transcript: &mut Transcript,
+        splice_junctions: &[SpliceJunction],
+        coverage: &[u32],
+        region: &GenomicInterval,
+        coverage_threshold: u32,
+        is_forward: bool,
+        gene_id: &str,
+    ) -> Result<bool> {
+        // Get the current 5' end of the transcript
+        let current_five_prime_pos = if is_forward {
+            transcript.exons[0].start
+        } else {
+            transcript.exons.last().unwrap().end
+        };
+
+        // Find potential extension region
+        let extension_start = if is_forward {
+            region.start
+        } else {
+            current_five_prime_pos + 1
+        };
+
+        let extension_end = if is_forward {
+            current_five_prime_pos.saturating_sub(1)
+        } else {
+            region.end.min(current_five_prime_pos + self.config.max_utr_extension as u64)
+        };
+
+        if extension_start >= extension_end {
+            return Ok(false);
+        }
+
+        // Find splice junctions in the extension region that could extend the 5' UTR
+        let relevant_junctions = self.find_junctions_in_extension_region(
+            splice_junctions,
+            extension_start,
+            extension_end,
+            current_five_prime_pos,
+            is_forward,
+            true, // is_five_prime
+        );
+
+        if relevant_junctions.is_empty() {
+            // No splice junctions found, fall back to simple coverage-based extension
+            return self.extend_five_prime_simple(
+                transcript,
+                coverage,
+                region,
+                coverage_threshold,
+                is_forward,
+                gene_id,
+            );
+        }
+
+        // Extend using splice junctions to create proper exon-intron structure
+        self.extend_five_prime_with_junctions(
+            transcript,
+            &relevant_junctions,
+            coverage,
+            region,
+            coverage_threshold,
+            is_forward,
+            gene_id,
+        )
+    }
+
+    /// Extend 3' UTR with splice junction awareness
+    fn extend_three_prime_utr_with_junctions(
+        &self,
+        transcript: &mut Transcript,
+        splice_junctions: &[SpliceJunction],
+        coverage: &[u32],
+        region: &GenomicInterval,
+        coverage_threshold: u32,
+        is_forward: bool,
+        gene_id: &str,
+    ) -> Result<bool> {
+        // Get the current 3' end of the transcript
+        let current_three_prime_pos = if is_forward {
+            transcript.exons.last().unwrap().end
+        } else {
+            transcript.exons[0].start
+        };
+
+        // Find potential extension region
+        let extension_start = if is_forward {
+            current_three_prime_pos + 1
+        } else {
+            region.start
+        };
+
+        let extension_end = if is_forward {
+            region.end.min(current_three_prime_pos + self.config.max_utr_extension as u64)
+        } else {
+            current_three_prime_pos.saturating_sub(1)
+        };
+
+        if extension_start >= extension_end {
+            return Ok(false);
+        }
+
+        // Find splice junctions in the extension region that could extend the 3' UTR
+        let relevant_junctions = self.find_junctions_in_extension_region(
+            splice_junctions,
+            extension_start,
+            extension_end,
+            current_three_prime_pos,
+            is_forward,
+            false, // is_five_prime
+        );
+
+        if relevant_junctions.is_empty() {
+            // No splice junctions found, fall back to simple coverage-based extension
+            return self.extend_three_prime_simple(
+                transcript,
+                coverage,
+                region,
+                coverage_threshold,
+                is_forward,
+                gene_id,
+            );
+        }
+
+        // Extend using splice junctions to create proper exon-intron structure
+        self.extend_three_prime_with_junctions(
+            transcript,
+            &relevant_junctions,
+            coverage,
+            region,
+            coverage_threshold,
+            is_forward,
+            gene_id,
+        )
+    }
+
+    /// Find splice junctions in the extension region
+    fn find_junctions_in_extension_region(
+        &self,
+        splice_junctions: &[SpliceJunction],
+        extension_start: u64,
+        extension_end: u64,
+        current_boundary: u64,
+        is_forward: bool,
+        is_five_prime: bool,
+    ) -> Vec<SpliceJunction> {
+        let mut relevant_junctions = Vec::new();
+
+        for junction in splice_junctions {
+            if junction.support_count < self.config.min_splice_support {
+                continue;
+            }
+
+            // Check if junction is in the extension region and connects to the transcript
+            let junction_connects = if is_five_prime {
+                if is_forward {
+                    // 5' extension on forward strand: look for junctions that end at current start
+                    junction.acceptor_pos == current_boundary
+                        && junction.donor_pos >= extension_start
+                        && junction.donor_pos < extension_end
+                } else {
+                    // 5' extension on reverse strand: look for junctions that start at current end
+                    junction.donor_pos == current_boundary
+                        && junction.acceptor_pos >= extension_start
+                        && junction.acceptor_pos < extension_end
+                }
+            } else {
+                // 3' extension
+                if is_forward {
+                    // 3' extension on forward strand: look for junctions that start at current end
+                    junction.donor_pos == current_boundary
+                        && junction.acceptor_pos >= extension_start
+                        && junction.acceptor_pos < extension_end
+                } else {
+                    // 3' extension on reverse strand: look for junctions that end at current start
+                    junction.acceptor_pos == current_boundary
+                        && junction.donor_pos >= extension_start
+                        && junction.donor_pos < extension_end
+                }
+            };
+
+            if junction_connects {
+                relevant_junctions.push(junction.clone());
+            }
+        }
+
+        // Sort junctions by position for consistent processing
+        relevant_junctions.sort_by_key(|j| if is_forward { j.donor_pos } else { j.acceptor_pos });
+
+        debug!(
+            "Found {} relevant splice junctions for {} UTR extension",
+            relevant_junctions.len(),
+            if is_five_prime { "5'" } else { "3'" }
+        );
+
+        relevant_junctions
+    }
+
     /// Extend the analysis interval to capture potential UTR extensions
     fn extend_interval_for_analysis(&self, interval: &GenomicInterval) -> GenomicInterval {
         GenomicInterval {
@@ -750,6 +1477,324 @@ impl RefinementEngine {
                 .max(1),
             end: interval.end + self.config.max_utr_extension as u64,
             strand: interval.strand,
+        }
+    }
+
+    /// Extend 5' UTR using splice junctions to create proper exon-intron structure
+    fn extend_five_prime_with_junctions(
+        &self,
+        transcript: &mut Transcript,
+        junctions: &[SpliceJunction],
+        coverage: &[u32],
+        region: &GenomicInterval,
+        coverage_threshold: u32,
+        is_forward: bool,
+        gene_id: &str,
+    ) -> Result<bool> {
+        if junctions.is_empty() {
+            return Ok(false);
+        }
+
+        let mut extended = false;
+        let original_exon_count = transcript.exons.len();
+
+        // Process junctions to add new 5' exons
+        for junction in junctions {
+            // Determine the new exon boundaries based on junction and coverage
+            let new_exon = if is_forward {
+                // For forward strand, new exon is upstream of the junction
+                let potential_start = region.start;
+                let potential_end = junction.donor_pos;
+
+                // Find actual start based on coverage
+                let actual_start = self.find_coverage_start(
+                    coverage,
+                    region,
+                    potential_start,
+                    potential_end,
+                    coverage_threshold,
+                )?;
+
+                if actual_start < potential_end {
+                    Some(Exon {
+                        id: None, // Will be assigned during output
+                        start: actual_start,
+                        end: potential_end,
+                    })
+                } else {
+                    None
+                }
+            } else {
+                // For reverse strand, new exon is downstream of the junction
+                let potential_start = junction.acceptor_pos;
+                let potential_end = region.end;
+
+                // Find actual end based on coverage
+                let actual_end = self.find_coverage_end(
+                    coverage,
+                    region,
+                    potential_start,
+                    potential_end,
+                    coverage_threshold,
+                )?;
+
+                if potential_start < actual_end {
+                    Some(Exon {
+                        id: None, // Will be assigned during output
+                        start: potential_start,
+                        end: actual_end,
+                    })
+                } else {
+                    None
+                }
+            };
+
+            if let Some(exon) = new_exon {
+                // Store exon coordinates before moving
+                let exon_start = exon.start;
+                let exon_end = exon.end;
+
+                // Add the new exon to the transcript
+                if is_forward {
+                    transcript.exons.insert(0, exon);
+                } else {
+                    transcript.exons.push(exon);
+                }
+                extended = true;
+
+                debug!(
+                    "Added new 5' UTR exon to transcript {} at {}-{} via splice junction",
+                    transcript.id, exon_start, exon_end
+                );
+
+                // Log the extension
+                log_utr_extension(
+                    gene_id,
+                    &transcript.id,
+                    "5PRIME_JUNCTION",
+                    if is_forward { transcript.exons[1].start } else { transcript.exons[transcript.exons.len()-2].end },
+                    if is_forward { exon_start } else { exon_end },
+                    if is_forward { transcript.exons[1].start - exon_start } else { exon_end - transcript.exons[transcript.exons.len()-2].end },
+                );
+            }
+        }
+
+        if extended {
+            transcript.update_boundaries();
+            debug!(
+                "Extended 5' UTR for transcript {} from {} to {} exons using splice junctions",
+                transcript.id, original_exon_count, transcript.exons.len()
+            );
+        }
+
+        Ok(extended)
+    }
+
+    /// Extend 3' UTR using splice junctions to create proper exon-intron structure
+    fn extend_three_prime_with_junctions(
+        &self,
+        transcript: &mut Transcript,
+        junctions: &[SpliceJunction],
+        coverage: &[u32],
+        region: &GenomicInterval,
+        coverage_threshold: u32,
+        is_forward: bool,
+        gene_id: &str,
+    ) -> Result<bool> {
+        if junctions.is_empty() {
+            return Ok(false);
+        }
+
+        let mut extended = false;
+        let original_exon_count = transcript.exons.len();
+
+        // Process junctions to add new 3' exons
+        for junction in junctions {
+            // Determine the new exon boundaries based on junction and coverage
+            let new_exon = if is_forward {
+                // For forward strand, new exon is downstream of the junction
+                let potential_start = junction.acceptor_pos;
+                let potential_end = region.end;
+
+                // Find actual end based on coverage
+                let actual_end = self.find_coverage_end(
+                    coverage,
+                    region,
+                    potential_start,
+                    potential_end,
+                    coverage_threshold,
+                )?;
+
+                if potential_start < actual_end {
+                    Some(Exon {
+                        id: None, // Will be assigned during output
+                        start: potential_start,
+                        end: actual_end,
+                    })
+                } else {
+                    None
+                }
+            } else {
+                // For reverse strand, new exon is upstream of the junction
+                let potential_start = region.start;
+                let potential_end = junction.donor_pos;
+
+                // Find actual start based on coverage
+                let actual_start = self.find_coverage_start(
+                    coverage,
+                    region,
+                    potential_start,
+                    potential_end,
+                    coverage_threshold,
+                )?;
+
+                if actual_start < potential_end {
+                    Some(Exon {
+                        id: None, // Will be assigned during output
+                        start: actual_start,
+                        end: potential_end,
+                    })
+                } else {
+                    None
+                }
+            };
+
+            if let Some(exon) = new_exon {
+                // Store exon coordinates before moving
+                let exon_start = exon.start;
+                let exon_end = exon.end;
+
+                // Add the new exon to the transcript
+                if is_forward {
+                    transcript.exons.push(exon);
+                } else {
+                    transcript.exons.insert(0, exon);
+                }
+                extended = true;
+
+                debug!(
+                    "Added new 3' UTR exon to transcript {} at {}-{} via splice junction",
+                    transcript.id, exon_start, exon_end
+                );
+
+                // Log the extension
+                log_utr_extension(
+                    gene_id,
+                    &transcript.id,
+                    "3PRIME_JUNCTION",
+                    if is_forward { transcript.exons[transcript.exons.len()-2].end } else { transcript.exons[1].start },
+                    if is_forward { exon_end } else { exon_start },
+                    if is_forward { exon_end - transcript.exons[transcript.exons.len()-2].end } else { transcript.exons[1].start - exon_start },
+                );
+            }
+        }
+
+        if extended {
+            transcript.update_boundaries();
+            debug!(
+                "Extended 3' UTR for transcript {} from {} to {} exons using splice junctions",
+                transcript.id, original_exon_count, transcript.exons.len()
+            );
+        }
+
+        Ok(extended)
+    }
+
+    /// Find the start of coverage-supported region
+    fn find_coverage_start(
+        &self,
+        coverage: &[u32],
+        region: &GenomicInterval,
+        search_start: u64,
+        search_end: u64,
+        threshold: u32,
+    ) -> Result<u64> {
+        let start_offset = (search_start.saturating_sub(region.start)) as usize;
+        let end_offset = ((search_end.saturating_sub(region.start)) as usize).min(coverage.len());
+
+        // Find the leftmost position with sufficient coverage
+        for i in start_offset..end_offset {
+            if coverage[i] >= threshold {
+                return Ok(region.start + i as u64);
+            }
+        }
+
+        // If no coverage found, return the search end
+        Ok(search_end)
+    }
+
+    /// Find the end of coverage-supported region
+    fn find_coverage_end(
+        &self,
+        coverage: &[u32],
+        region: &GenomicInterval,
+        search_start: u64,
+        search_end: u64,
+        threshold: u32,
+    ) -> Result<u64> {
+        let start_offset = (search_start.saturating_sub(region.start)) as usize;
+        let end_offset = ((search_end.saturating_sub(region.start)) as usize).min(coverage.len());
+
+        // Find the rightmost position with sufficient coverage
+        for i in (start_offset..end_offset).rev() {
+            if coverage[i] >= threshold {
+                return Ok(region.start + i as u64 + 1); // +1 because end is exclusive
+            }
+        }
+
+        // If no coverage found, return the search start
+        Ok(search_start)
+    }
+
+    /// Simple 5' UTR extension fallback (coverage-based only)
+    fn extend_five_prime_simple(
+        &self,
+        transcript: &mut Transcript,
+        coverage: &[u32],
+        region: &GenomicInterval,
+        coverage_threshold: u32,
+        is_forward: bool,
+        gene_id: &str,
+    ) -> Result<bool> {
+        // Use the original extension logic as fallback
+        let extension = if is_forward {
+            self.find_upstream_extension(transcript, coverage, region, coverage_threshold)?
+        } else {
+            self.find_downstream_extension(transcript, coverage, region, coverage_threshold)?
+        };
+
+        const MIN_EXTENSION_LENGTH: u64 = 5;
+        if extension >= MIN_EXTENSION_LENGTH {
+            self.apply_five_prime_extension(transcript, extension, is_forward, gene_id)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Simple 3' UTR extension fallback (coverage-based only)
+    fn extend_three_prime_simple(
+        &self,
+        transcript: &mut Transcript,
+        coverage: &[u32],
+        region: &GenomicInterval,
+        coverage_threshold: u32,
+        is_forward: bool,
+        gene_id: &str,
+    ) -> Result<bool> {
+        // Use the original extension logic as fallback
+        let extension = if is_forward {
+            self.find_downstream_extension(transcript, coverage, region, coverage_threshold)?
+        } else {
+            self.find_upstream_extension(transcript, coverage, region, coverage_threshold)?
+        };
+
+        const MIN_EXTENSION_LENGTH: u64 = 5;
+        if extension >= MIN_EXTENSION_LENGTH {
+            self.apply_three_prime_extension(transcript, extension, is_forward, gene_id)?;
+            Ok(true)
+        } else {
+            Ok(false)
         }
     }
 
@@ -833,7 +1878,7 @@ impl RefinementEngine {
             end: chromosome_length,
             strand: Strand::Forward, // This parameter is not used for junction extraction
         };
-        let splice_junctions = bam_reader.get_splice_junctions_in_region(&region)?;
+        let splice_junctions = bam_reader.get_splice_junctions_in_region_with_library_type(&region, self.config.library_type)?;
 
         debug!(
             "Found {} total splice junctions on chromosome {}",
@@ -1296,6 +2341,79 @@ impl RefinementEngine {
 
         Ok(transcript_seq)
     }
+
+    /// Filter splice junctions based on strand bias
+    fn filter_splice_junctions_by_strand(
+        &self,
+        splice_junctions: &[SpliceJunction],
+        gene_strand: Strand,
+        strand_bias: StrandBias,
+    ) -> Vec<SpliceJunction> {
+        let original_count = splice_junctions.len();
+
+        let filtered_junctions = match strand_bias {
+            StrandBias::Unstranded => {
+                // For unstranded data, use all splice junctions
+                splice_junctions.to_vec()
+            }
+            StrandBias::ForwardStranded => {
+                // For forward-stranded data, only use junctions that match gene strand
+                splice_junctions
+                    .iter()
+                    .filter(|junction| {
+                        // For forward-stranded libraries, reads on the same strand as the gene are informative
+                        junction.strand == gene_strand || junction.strand == Strand::Unknown
+                    })
+                    .cloned()
+                    .collect()
+            }
+            StrandBias::ReverseStranded => {
+                // For reverse-stranded data, only use junctions from opposite strand
+                splice_junctions
+                    .iter()
+                    .filter(|junction| {
+                        // For reverse-stranded libraries, reads on the opposite strand are informative
+                        let opposite_strand = match gene_strand {
+                            Strand::Forward => Strand::Reverse,
+                            Strand::Reverse => Strand::Forward,
+                            Strand::Unknown => Strand::Unknown,
+                        };
+                        junction.strand == opposite_strand || junction.strand == Strand::Unknown
+                    })
+                    .cloned()
+                    .collect()
+            }
+        };
+
+        let filtered_count = filtered_junctions.len();
+        if original_count != filtered_count {
+            debug!(
+                "Strand filtering ({}) reduced splice junctions from {} to {} for gene strand {}",
+                strand_bias, original_count, filtered_count, gene_strand
+            );
+        }
+
+        filtered_junctions
+    }
+
+    /// Refine exon structure with strand bias awareness
+    fn refine_exon_structure_with_strand_bias(
+        &self,
+        transcript: &mut Transcript,
+        splice_junctions: &[SpliceJunction],
+        gene_id: &str,
+        genome: &Genome,
+        _gene_strand: Strand,
+        strand_bias: StrandBias,
+    ) -> Result<bool> {
+        debug!(
+            "Refining exon structure for transcript {} with strand bias: {}",
+            transcript.id, strand_bias
+        );
+
+        // Use the existing refine_exon_structure method with filtered junctions
+        self.refine_exon_structure(transcript, splice_junctions, gene_id, genome)
+    }
 }
 
 /// Result of UTR extension analysis
@@ -1303,6 +2421,15 @@ impl RefinementEngine {
 struct UtrExtensionResult {
     five_prime_extended: bool,
     three_prime_extended: bool,
+}
+
+/// Result of comprehensive UTR refinement analysis (extension + trimming)
+#[derive(Debug, Default)]
+struct UtrRefinementResult {
+    five_prime_extended: bool,
+    three_prime_extended: bool,
+    five_prime_trimmed: bool,
+    three_prime_trimmed: bool,
 }
 
 /// Summary of refinement results
@@ -1313,6 +2440,8 @@ pub struct RefinementSummary {
     pub transcripts_with_structure_changes: u32,
     pub transcripts_with_5utr_extension: u32,
     pub transcripts_with_3utr_extension: u32,
+    pub transcripts_with_5utr_trimming: u32,
+    pub transcripts_with_3utr_trimming: u32,
     pub novel_genes_detected: u32,
 }
 
@@ -1325,6 +2454,8 @@ impl RefinementSummary {
         self.transcripts_with_structure_changes += other.transcripts_with_structure_changes;
         self.transcripts_with_5utr_extension += other.transcripts_with_5utr_extension;
         self.transcripts_with_3utr_extension += other.transcripts_with_3utr_extension;
+        self.transcripts_with_5utr_trimming += other.transcripts_with_5utr_trimming;
+        self.transcripts_with_3utr_trimming += other.transcripts_with_3utr_trimming;
         self.novel_genes_detected += other.novel_genes_detected;
     }
 }
@@ -1332,9 +2463,10 @@ impl RefinementSummary {
 impl std::fmt::Display for RefinementSummary {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f,
-            "Genes processed: {}, Failed: {}, Structure changes: {}, 5'UTR extensions: {}, 3'UTR extensions: {}",
+            "Genes processed: {}, Failed: {}, Structure changes: {}, 5'UTR extensions: {}, 3'UTR extensions: {}, 5'UTR trims: {}, 3'UTR trims: {}",
             self.genes_processed, self.genes_failed, self.transcripts_with_structure_changes,
-            self.transcripts_with_5utr_extension, self.transcripts_with_3utr_extension
+            self.transcripts_with_5utr_extension, self.transcripts_with_3utr_extension,
+            self.transcripts_with_5utr_trimming, self.transcripts_with_3utr_trimming
         )
     }
 }
