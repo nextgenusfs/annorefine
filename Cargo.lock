@@ -28,7 +28,7 @@ dependencies = [
 
 [[package]]
 name = "annorefine"
-version = "2025.9.18"
+version = "2025.12.31"
 dependencies = [
  "anyhow",
  "bincode",
