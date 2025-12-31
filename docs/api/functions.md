@@ -33,7 +33,8 @@ annorefine.bam2hints(
     max_gene_len: int = 400000,
     threads: int = None,
     contig: str = None,
-    region: tuple = None
+    region: tuple = None,
+    contig_map: dict = None
 ) -> dict
 ```
 
@@ -48,6 +49,7 @@ annorefine.bam2hints(
 - `threads` (int): Number of threads to use (default: None, uses all available)
 - `contig` (str): Filter to only process alignments on this contig (default: None)
 - `region` (tuple): Filter to region as (contig, start, end) tuple (default: None)
+- `contig_map` (dict): Dictionary to rename contigs in output. Keys are input contig names, values are output contig names (default: None, no mapping)
 
 **Returns:** Dictionary with conversion statistics
 
@@ -74,6 +76,20 @@ result = annorefine.bam2hints(
     min_intron_len=32,
     max_intron_len=350000,
     contig="chr1"
+)
+
+# With contig name mapping
+contig_map = {
+    'NC_000001.11': 'chr1',
+    'NC_000002.12': 'chr2',
+    'NC_000003.12': 'chr3'
+}
+
+result = annorefine.bam2hints(
+    bam_file="alignments.bam",
+    output_file="hints.gff",
+    library_type="RF",
+    contig_map=contig_map  # Rename contigs in output
 )
 
 print(f"Generated {result['total_hints_generated']} hints")
@@ -365,7 +381,8 @@ annorefine.Bam2HintsConfig(
     splice_sites_on: bool = False,
     truncated_splice_sites: bool = False,
     score: float = 0.0,
-    max_gene_len: int = 400000
+    max_gene_len: int = 400000,
+    contig_map: dict = None
 )
 ```
 
@@ -382,6 +399,14 @@ config = annorefine.Bam2HintsConfig(
     min_end_block_len=8,
     source="E",
     introns_only=False
+)
+
+# With contig mapping
+contig_map = {'NC_000001.11': 'chr1', 'NC_000002.12': 'chr2'}
+config = annorefine.Bam2HintsConfig(
+    priority=4,
+    source="E",
+    contig_map=contig_map
 )
 ```
 

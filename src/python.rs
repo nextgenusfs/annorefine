@@ -167,6 +167,8 @@ pub struct PyBam2HintsConfig {
     pub max_gene_len: u32,
     #[pyo3(get, set)]
     pub library_type: String,
+    #[pyo3(get, set)]
+    pub contig_map: std::collections::HashMap<String, String>,
 }
 
 #[cfg(feature = "python")]
@@ -190,7 +192,8 @@ impl PyBam2HintsConfig {
         splice_sites_on = false,
         truncated_splice_sites = false,
         score = 0.0,
-        max_gene_len = 400000
+        max_gene_len = 400000,
+        contig_map = None
     ))]
     pub fn new(
         library_type: String,
@@ -210,6 +213,7 @@ impl PyBam2HintsConfig {
         truncated_splice_sites: bool,
         score: f64,
         max_gene_len: u32,
+        contig_map: Option<std::collections::HashMap<String, String>>,
     ) -> Self {
         Self {
             priority,
@@ -229,6 +233,7 @@ impl PyBam2HintsConfig {
             score,
             max_gene_len,
             library_type,
+            contig_map: contig_map.unwrap_or_else(|| std::collections::HashMap::new()),
         }
     }
 
@@ -284,6 +289,7 @@ impl From<PyBam2HintsConfig> for Bam2HintsConfig {
             max_gene_len: py_config.max_gene_len,
             library_type,
             strand_bias,
+            contig_map: py_config.contig_map,
         }
     }
 }
@@ -471,7 +477,7 @@ pub fn bam2hints_convert<'py>(
 
     // Use provided config or create default with required library_type
     let rust_config: Bam2HintsConfig = config
-        .unwrap_or_else(|| PyBam2HintsConfig::new(library_type.to_string(), 4, 14, 32, 350000, 8, 5, 10, "E".to_string(), false, false, false, 0, false, false, 0.0, 400000))
+        .unwrap_or_else(|| PyBam2HintsConfig::new(library_type.to_string(), 4, 14, 32, 350000, 8, 5, 10, "E".to_string(), false, false, false, 0, false, false, 0.0, 400000, None))
         .into();
 
     // Set up threading - create a custom thread pool if specified
@@ -519,7 +525,7 @@ pub fn bam2hints_convert<'py>(
     result.set_item("alignments_with_hints", hints_count)?;
     result.set_item("total_hints_generated", total_hints)?;
     result.set_item("output_file", output_file)?;
-    result.set_item("config", config_clone.unwrap_or_else(|| PyBam2HintsConfig::new(library_type.to_string(), 4, 14, 32, 350000, 8, 5, 10, "E".to_string(), false, false, false, 0, false, false, 0.0, 400000)).into_py(py))?;
+    result.set_item("config", config_clone.unwrap_or_else(|| PyBam2HintsConfig::new(library_type.to_string(), 4, 14, 32, 350000, 8, 5, 10, "E".to_string(), false, false, false, 0, false, false, 0.0, 400000, None)).into_py(py))?;
 
     Ok(result)
 }
@@ -1059,7 +1065,7 @@ fn process_bam_for_hints(
     // Write hints to output file
     let output_file_handle = std::fs::File::create(output_file)
         .map_err(|e| anyhow::anyhow!("Failed to create output file: {}", e))?;
-    let mut writer = HintsWriter::new(output_file_handle);
+    let mut writer = HintsWriter::new_with_contig_map(output_file_handle, rust_config.contig_map.clone());
 
     // Write header (matching CLI behavior)
     let config_summary = format!(

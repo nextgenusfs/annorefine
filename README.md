@@ -61,7 +61,8 @@ result = annorefine.refine(
 result = annorefine.bam2hints(
     bam_file="alignments.bam",
     output_file="hints.gff",
-    library_type="RF"
+    library_type="RF",
+    contig_map={'NC_000001.11': 'chr1'}  # Optional: rename contigs
 )
 
 # Join hints from multiple sources

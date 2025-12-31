@@ -8,6 +8,7 @@ use log::debug;
 pub struct HintsWriter<W: Write> {
     writer: W,
     pub hints_written: usize,
+    contig_map: std::collections::HashMap<String, String>,
 }
 
 impl<W: Write> HintsWriter<W> {
@@ -16,6 +17,16 @@ impl<W: Write> HintsWriter<W> {
         Self {
             writer,
             hints_written: 0,
+            contig_map: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Create a new hints writer with contig name mapping
+    pub fn new_with_contig_map(writer: W, contig_map: std::collections::HashMap<String, String>) -> Self {
+        Self {
+            writer,
+            hints_written: 0,
+            contig_map,
         }
     }
 
@@ -30,7 +41,30 @@ impl<W: Write> HintsWriter<W> {
 
     /// Write a single hint to the GFF file
     pub fn write_hint(&mut self, hint: &AugustusHint) -> Result<()> {
-        let gff_line = hint.to_gff3_line();
+        // Apply contig mapping if present
+        let output_contig = self.contig_map.get(&hint.chromosome)
+            .unwrap_or(&hint.chromosome);
+
+        // Build GFF line with potentially mapped contig name
+        let mut attributes = Vec::new();
+        if hint.multiplicity > 1 {
+            attributes.push(format!("mult={}", hint.multiplicity));
+        }
+        attributes.push(format!("pri={}", hint.priority));
+        attributes.push(format!("src={}", hint.source));
+        let attributes_str = attributes.join(";");
+
+        let gff_line = format!(
+            "{}\tb2h\t{}\t{}\t{}\t{}\t{}\t.\t{}",
+            output_contig,
+            hint.hint_type,
+            hint.start,
+            hint.end,
+            hint.score,
+            hint.strand,
+            attributes_str
+        );
+
         writeln!(self.writer, "{}", gff_line)?;
         self.hints_written += 1;
         Ok(())

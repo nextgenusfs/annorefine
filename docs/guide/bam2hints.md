@@ -154,6 +154,31 @@ result = annorefine.bam2hints(
 )
 ```
 
+### Contig Name Mapping
+
+Rename contigs in the output (useful for converting between naming conventions):
+
+```python
+# Define contig name mapping
+contig_map = {
+    'NC_000001.11': 'chr1',
+    'NC_000002.12': 'chr2',
+    'NC_000003.12': 'chr3',
+    # ... etc
+}
+
+# Generate hints with renamed contigs
+result = annorefine.bam2hints(
+    bam_file="alignments.bam",
+    output_file="hints.gff",
+    library_type="RF",
+    contig_map=contig_map
+)
+
+# Contigs in the map will be renamed in the output
+# Contigs not in the map will keep their original names
+```
+
 ## Joining Hints from Multiple Sources
 
 After generating hints from different sources (BAM, proteins, transcripts), join them:

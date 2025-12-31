@@ -638,6 +638,8 @@ pub struct Bam2HintsConfig {
     pub library_type: LibraryType,
     /// Detected strand bias from BAM file
     pub strand_bias: StrandBias,
+    /// Map to rename contigs in output (default: empty)
+    pub contig_map: std::collections::HashMap<String, String>,
 }
 
 impl Default for Bam2HintsConfig {
@@ -661,6 +663,7 @@ impl Default for Bam2HintsConfig {
             max_gene_len: 400000,
             library_type: LibraryType::Auto,
             strand_bias: StrandBias::Unstranded,
+            contig_map: std::collections::HashMap::new(),
         }
     }
 }

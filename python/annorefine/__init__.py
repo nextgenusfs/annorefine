@@ -168,6 +168,7 @@ def bam2hints(
     threads: int = None,
     contig: str = None,
     region: tuple = None,
+    contig_map: dict = None,
 ) -> dict:
     """
     Convenience function for BAM to Augustus hints conversion with keyword arguments.
@@ -198,6 +199,8 @@ def bam2hints(
         threads: Number of threads to use for parallel processing (default: None, uses all available)
         contig: Filter to only process alignments on this contig (default: None, process all)
         region: Filter to only process alignments in this region as (contig, start, end) tuple (default: None)
+        contig_map: Dictionary to rename contigs in output (default: None, empty dict)
+                   Keys are input contig names, values are output contig names
 
     Returns:
         Dictionary with conversion statistics and results
@@ -250,6 +253,7 @@ def bam2hints(
         truncated_splice_sites=truncated_splice_sites,
         score=score,
         max_gene_len=max_gene_len,
+        contig_map=contig_map if contig_map is not None else {},
     )
 
     return bam2hints_convert(

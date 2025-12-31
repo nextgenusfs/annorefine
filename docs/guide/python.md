@@ -48,7 +48,8 @@ result = annorefine.bam2hints(
     introns_only: bool = False, # Only output intron hints
     threads: int = None,        # Number of threads (None = all)
     contig: str = None,         # Filter to specific contig
-    region: tuple = None        # Filter to region (contig, start, end)
+    region: tuple = None,       # Filter to region (contig, start, end)
+    contig_map: dict = None     # Rename contigs in output
 )
 ```
 
@@ -123,6 +124,36 @@ result = annorefine.refine(
     strand_bias_threshold: float = 0.65,    # Strand detection threshold
     threads: int = None                     # Number of threads
 )
+```
+
+## Advanced Usage
+
+### Contig Name Mapping
+
+Rename contigs in the output for downstream workflows that require different naming conventions:
+
+```python
+import annorefine
+
+# Define contig name mapping (e.g., NCBI RefSeq to simple names)
+contig_map = {
+    'NC_000001.11': 'chr1',
+    'NC_000002.12': 'chr2',
+    'NC_000003.12': 'chr3',
+    'NC_000004.12': 'chr4',
+    # ... etc
+}
+
+# Generate hints with renamed contigs
+result = annorefine.bam2hints(
+    bam_file="alignments.bam",
+    output_file="hints.gff",
+    library_type="RF",
+    contig_map=contig_map
+)
+
+# Contigs present in the map will be renamed in the output
+# Contigs not in the map will keep their original names
 ```
 
 ## Funannotate2 Integration
