@@ -230,6 +230,7 @@ impl Bam2HintsCommand {
             max_gene_len: self.max_gene_len,
             library_type,
             strand_bias,
+            contig_map: std::collections::HashMap::new(), // CLI doesn't support contig mapping
         }
     }
 
