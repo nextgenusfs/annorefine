@@ -219,6 +219,7 @@ annorefine.refine(
     validate_splice_sites: bool = True,
     strand_bias_threshold: float = 0.65,
     max_reads_for_strand_detection: int = 10000,
+    library_type: str = "auto",
     threads: int = None
 ) -> dict
 ```
@@ -235,10 +236,30 @@ annorefine.refine(
 - `enable_novel_gene_detection` (bool): Enable novel gene detection (default: False)
 - `min_novel_gene_coverage` (int): Minimum coverage for novel genes (default: 10)
 - `min_novel_gene_length` (int): Minimum length for novel genes (default: 300)
+- `min_exon_length` (int): Minimum exon length (default: 50)
 - `validate_splice_sites` (bool): Validate splice sites (default: True)
+- `strand_bias_threshold` (float): Threshold for strand detection (default: 0.65)
+- `max_reads_for_strand_detection` (int): Max reads to sample for strand detection (default: 10000)
+- `library_type` (str): Library strandedness - "auto", "FR", "RF", or "UU" (default: "auto")
+- `contig_map` (dict): Map GFF3 contig names to BAM contig names (default: None)
 - `threads` (int): Number of threads (default: None, uses all available)
 
-**Returns:** Dictionary with refinement statistics
+**Returns:** Dictionary with refinement statistics and results
+
+```python
+{
+    'genes_processed': int,                      # Total genes processed
+    'genes_failed': int,                         # Genes that failed processing
+    'transcripts_with_structure_changes': int,   # Transcripts with exon/intron changes
+    'transcripts_with_5utr_extension': int,      # Transcripts with 5' UTR extended
+    'transcripts_with_3utr_extension': int,      # Transcripts with 3' UTR extended
+    'transcripts_with_5utr_trimming': int,       # Transcripts with 5' UTR trimmed
+    'transcripts_with_3utr_trimming': int,       # Transcripts with 3' UTR trimmed
+    'novel_genes_detected': int,                 # Novel genes discovered
+    'gene_models': list,                         # List of GeneModel objects
+    'output_file': str                           # Path to output file
+}
+```
 
 **Example:**
 
@@ -253,7 +274,15 @@ result = annorefine.refine(
     output_file="refined.gff3"
 )
 
-# With novel gene detection
+# Print summary statistics
+print(f"Genes processed: {result['genes_processed']}")
+print(f"Structure changes: {result['transcripts_with_structure_changes']}")
+print(f"5' UTR extensions: {result['transcripts_with_5utr_extension']}")
+print(f"3' UTR extensions: {result['transcripts_with_3utr_extension']}")
+print(f"5' UTR trims: {result['transcripts_with_5utr_trimming']}")
+print(f"3' UTR trims: {result['transcripts_with_3utr_trimming']}")
+
+# With novel gene detection and explicit library type
 result = annorefine.refine(
     fasta_file="genome.fa",
     gff3_file="annotations.gff3",
@@ -262,11 +291,25 @@ result = annorefine.refine(
     enable_novel_gene_detection=True,
     min_novel_gene_coverage=10,
     min_novel_gene_length=300,
+    library_type="RF",  # Specify stranded library
     threads=8
 )
 
-print(f"Processed {result['genes_processed']} genes")
-print(f"Novel genes: {result['novel_genes_detected']}")
+print(f"Novel genes detected: {result['novel_genes_detected']}")
+
+# Access gene models
+for gene in result['gene_models']:
+    print(f"Gene: {gene.gene_id}, Transcripts: {len(gene.transcripts)}")
+
+# With contig mapping (GFF3 uses chr1, BAM uses NC_000001.11)
+result = annorefine.refine(
+    fasta_file="genome.fa",
+    gff3_file="annotations.gff3",
+    bam_file="alignments.bam",
+    output_file="refined.gff3",
+    contig_map={'chr1': 'NC_000001.11', 'chr2': 'NC_000002.12'},
+    library_type="RF"
+)
 ```
 
 ### refine_annotations()
@@ -316,6 +359,73 @@ result = annorefine.refine_annotations(
     output_file="refined.gff3",
     config=config,
     threads=8
+)
+```
+
+### detect_library_type()
+
+Detect RNA-seq library strandedness from BAM file using gene models.
+
+**Signature:**
+```python
+annorefine.detect_library_type(
+    gff3_file: str,
+    bam_file: str,
+    strand_bias_threshold: float = 0.65,
+    max_reads: int = 10000,
+    contig_map: dict = None
+) -> dict
+```
+
+**Parameters:**
+
+- `gff3_file` (str): Path to GFF3 file with gene annotations
+- `bam_file` (str): Path to RNA-seq BAM file
+- `strand_bias_threshold` (float): Threshold for detecting stranded data, range 0.5-1.0 (default: 0.65)
+- `max_reads` (int): Maximum reads to sample for detection (default: 10000)
+- `contig_map` (dict): Map GFF3 contig names to BAM contig names (default: None)
+
+**Returns:** Dictionary with library type information
+
+```python
+{
+    'library_type': str,           # "FR", "RF", or "UU"
+    'strand_bias': str,            # "ForwardStranded", "ReverseStranded", or "Unstranded"
+    'strand_bias_ratio': float,    # 0.5-1.0 (higher = more stranded)
+    'total_reads': int,            # Total reads analyzed
+    'mapped_reads': int            # Number of mapped reads
+}
+```
+
+**Example:**
+
+```python
+import annorefine
+
+# Detect library type
+result = annorefine.detect_library_type(
+    gff3_file="genes.gff3",
+    bam_file="alignments.bam"
+)
+
+print(f"Library type: {result['library_type']}")
+print(f"Strand bias: {result['strand_bias']}")
+print(f"Strand bias ratio: {result['strand_bias_ratio']:.2f}")
+
+# Use detected library type in refinement
+annorefine.refine(
+    fasta_file="genome.fa",
+    gff3_file="genes.gff3",
+    bam_file="alignments.bam",
+    output_file="refined.gff3",
+    library_type=result['library_type']
+)
+
+# With contig mapping (GFF3 uses chr1, BAM uses NC_000001.11)
+result = annorefine.detect_library_type(
+    gff3_file="genes.gff3",
+    bam_file="alignments.bam",
+    contig_map={'chr1': 'NC_000001.11', 'chr2': 'NC_000002.12'}
 )
 ```
 

@@ -40,6 +40,7 @@ from ._annorefine import (
     bam2hints_convert,
     join_hints,
     filter_hints,
+    detect_library_type,
     version,
     current_num_threads,
     test_interruptible_operation,
@@ -60,6 +61,7 @@ __all__ = [
     "bam2hints_convert",
     "join_hints",
     "filter_hints",
+    "detect_library_type",
     "version",
     "current_num_threads",
     "test_interruptible_operation",
@@ -85,11 +87,13 @@ def refine(
     validate_splice_sites: bool = True,
     strand_bias_threshold: float = 0.65,
     max_reads_for_strand_detection: int = 10000,
+    library_type: str = "auto",
+    contig_map: dict = None,
     threads: int = None,
 ) -> dict:
     """
     Convenience function for annotation refinement with keyword arguments.
-    
+
     Args:
         fasta_file: Path to genome FASTA file
         gff3_file: Path to input GFF3 annotations
@@ -105,21 +109,33 @@ def refine(
         validate_splice_sites: Validate canonical splice sites
         strand_bias_threshold: Threshold for detecting stranded RNA-seq (0.5-1.0)
         max_reads_for_strand_detection: Maximum reads to sample for strand detection
+        library_type: Library strandedness ("auto", "FR", "RF", "UU", default: "auto")
+        contig_map: Dictionary mapping GFF3 contig names to BAM contig names (default: None)
         threads: Number of threads (None for auto-detect, uses custom thread pool)
-        
+
     Returns:
         Dictionary with refinement statistics and results
-        
+
     Example:
         >>> result = annorefine.refine(
         ...     fasta_file="genome.fasta",
         ...     gff3_file="genes.gff3",
-        ...     bam_file="rna_seq.bam", 
+        ...     bam_file="rna_seq.bam",
         ...     output_file="refined.gff3",
         ...     enable_novel_gene_detection=True,
+        ...     library_type="RF",
         ...     threads=8
         ... )
         >>> print(f"Processed {result['genes_processed']} genes")
+
+        >>> # With contig mapping (GFF3 uses chr1, BAM uses NC_000001.11)
+        >>> result = annorefine.refine(
+        ...     fasta_file="genome.fasta",
+        ...     gff3_file="genes.gff3",
+        ...     bam_file="rna_seq.bam",
+        ...     output_file="refined.gff3",
+        ...     contig_map={'chr1': 'NC_000001.11', 'chr2': 'NC_000002.12'}
+        ... )
     """
     config = RefinementConfig(
         min_coverage=min_coverage,
@@ -132,8 +148,9 @@ def refine(
         validate_splice_sites=validate_splice_sites,
         strand_bias_threshold=strand_bias_threshold,
         max_reads_for_strand_detection=max_reads_for_strand_detection,
+        library_type=library_type,
     )
-    
+
     return refine_annotations(
         fasta_file=fasta_file,
         gff3_file=gff3_file,
@@ -141,6 +158,7 @@ def refine(
         output_file=output_file,
         config=config,
         threads=threads,
+        contig_map=contig_map if contig_map is not None else {},
     )
 
 

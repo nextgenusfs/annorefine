@@ -329,7 +329,7 @@ impl PyGeneModel {
 /// Main Python interface for AnnoRefine
 #[cfg(feature = "python")]
 #[pyfunction]
-#[pyo3(signature = (fasta_file, gff3_file, bam_file, output_file, config = None, threads = None))]
+#[pyo3(signature = (fasta_file, gff3_file, bam_file, output_file, config = None, threads = None, contig_map = None))]
 pub fn refine_annotations<'py>(
     py: Python<'py>,
     fasta_file: &str,
@@ -338,6 +338,7 @@ pub fn refine_annotations<'py>(
     output_file: &str,
     config: Option<PyRefinementConfig>,
     threads: Option<usize>,
+    contig_map: Option<std::collections::HashMap<String, String>>,
 ) -> PyResult<Bound<'py, PyDict>> {
     // Set up threading - create a custom thread pool if specified
     let thread_pool = if let Some(num_threads) = threads {
@@ -371,9 +372,23 @@ pub fn refine_annotations<'py>(
         PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to parse GFF3: {:?}", e))
     })?;
 
-    // Detect strand bias from BAM file
-    let bam_stats = get_alignment_stats_with_config(
+    // Store original contig names and apply mapping for BAM queries if provided
+    let contig_mapping = contig_map.unwrap_or_else(|| std::collections::HashMap::new());
+    let mut original_contigs: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+
+    if !contig_mapping.is_empty() {
+        for gene in &mut gene_models {
+            if let Some(mapped_name) = contig_mapping.get(&gene.chromosome) {
+                original_contigs.insert(gene.id.clone(), gene.chromosome.clone());
+                gene.chromosome = mapped_name.clone();
+            }
+        }
+    }
+
+    // Detect strand bias from BAM file (using mapped contig names)
+    let bam_stats = crate::bam::get_alignment_stats_with_gene_models(
         bam_file,
+        &gene_models,
         rust_config.strand_bias_threshold,
         rust_config.max_reads_for_strand_detection,
     )
@@ -384,7 +399,7 @@ pub fn refine_annotations<'py>(
     // Create refinement engine
     let engine = RefinementEngine::new(rust_config);
 
-    // Refine annotations with interrupt handling
+    // Refine annotations with interrupt handling (gene models have mapped contig names for BAM queries)
     let summary = py
         .allow_threads(|| {
             if let Some(pool) = thread_pool {
@@ -409,7 +424,16 @@ pub fn refine_annotations<'py>(
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Refinement failed: {:?}", e))
         })?;
 
-    // Write output
+    // Restore original contig names for output
+    if !original_contigs.is_empty() {
+        for gene in &mut gene_models {
+            if let Some(original_name) = original_contigs.get(&gene.id) {
+                gene.chromosome = original_name.clone();
+            }
+        }
+    }
+
+    // Write output (with original GFF3 contig names)
     let mut writer = Gff3Writer::new(output_file).map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
             "Failed to create output file: {:?}",
@@ -450,6 +474,14 @@ pub fn refine_annotations<'py>(
     result.set_item(
         "transcripts_with_3utr_extension",
         summary.transcripts_with_3utr_extension,
+    )?;
+    result.set_item(
+        "transcripts_with_5utr_trimming",
+        summary.transcripts_with_5utr_trimming,
+    )?;
+    result.set_item(
+        "transcripts_with_3utr_trimming",
+        summary.transcripts_with_3utr_trimming,
     )?;
     result.set_item("novel_genes_detected", summary.novel_genes_detected)?;
     result.set_item("gene_models", py_gene_models.into_py(py))?;
@@ -893,6 +925,107 @@ pub fn filter_hints<'py>(
     Ok(result)
 }
 
+/// Detect library type/strandedness from BAM file using gene models
+///
+/// Analyzes RNA-seq alignments to determine the library strandedness by sampling
+/// reads from known gene regions. Supports contig name mapping when BAM file uses
+/// different contig names than the GFF3 file.
+///
+/// Args:
+///     gff3_file: Path to GFF3 file with gene annotations
+///     bam_file: Path to BAM file
+///     strand_bias_threshold: Threshold for detecting stranded data (0.5-1.0, default: 0.65)
+///     max_reads: Maximum reads to sample for detection (default: 10000)
+///     contig_map: Dictionary to map GFF3 contig names to BAM contig names (default: None)
+///
+/// Returns:
+///     Dictionary with:
+///     - library_type: "FR", "RF", or "UU"
+///     - strand_bias: "ForwardStranded", "ReverseStranded", or "Unstranded"
+///     - strand_bias_ratio: Ratio of reads on dominant strand (0.5-1.0)
+///     - total_reads: Total reads analyzed
+///     - mapped_reads: Number of mapped reads
+///
+/// Example:
+///     >>> result = annorefine.detect_library_type(
+///     ...     gff3_file="genes.gff3",
+///     ...     bam_file="alignments.bam"
+///     ... )
+///     >>> print(f"Library type: {result['library_type']}")
+///     >>> print(f"Strand bias ratio: {result['strand_bias_ratio']:.2f}")
+///
+///     >>> # With contig mapping (GFF3 uses chr1, BAM uses NC_000001.11)
+///     >>> result = annorefine.detect_library_type(
+///     ...     gff3_file="genes.gff3",
+///     ...     bam_file="alignments.bam",
+///     ...     contig_map={'chr1': 'NC_000001.11', 'chr2': 'NC_000002.12'}
+///     ... )
+#[cfg(feature = "python")]
+#[pyfunction]
+#[pyo3(signature = (gff3_file, bam_file, strand_bias_threshold = 0.65, max_reads = 10000, contig_map = None))]
+pub fn detect_library_type<'py>(
+    py: Python<'py>,
+    gff3_file: &str,
+    bam_file: &str,
+    strand_bias_threshold: f64,
+    max_reads: u32,
+    contig_map: Option<std::collections::HashMap<String, String>>,
+) -> PyResult<Bound<'py, PyDict>> {
+    // Parse gene models from GFF3
+    let mut gene_models = parse_gff3_file(gff3_file).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+            "Failed to parse GFF3 file: {}",
+            e
+        ))
+    })?;
+
+    // Apply contig mapping to gene models if provided
+    if let Some(ref mapping) = contig_map {
+        for gene in &mut gene_models {
+            if let Some(mapped_name) = mapping.get(&gene.chromosome) {
+                gene.chromosome = mapped_name.clone();
+            }
+        }
+    }
+
+    // Detect strand bias from BAM file using gene models
+    let stats = crate::bam::get_alignment_stats_with_gene_models(
+        bam_file,
+        &gene_models,
+        strand_bias_threshold,
+        max_reads,
+    )
+    .map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+            "Failed to detect library type: {}",
+            e
+        ))
+    })?;
+
+    // Convert strand bias to library type string
+    let library_type = match stats.strand_bias {
+        StrandBias::Unstranded => "UU",
+        StrandBias::ForwardStranded => "FR",
+        StrandBias::ReverseStranded => "RF",
+    };
+
+    let strand_bias_str = match stats.strand_bias {
+        StrandBias::Unstranded => "Unstranded",
+        StrandBias::ForwardStranded => "ForwardStranded",
+        StrandBias::ReverseStranded => "ReverseStranded",
+    };
+
+    // Create result dictionary
+    let result = PyDict::new_bound(py);
+    result.set_item("library_type", library_type)?;
+    result.set_item("strand_bias", strand_bias_str)?;
+    result.set_item("strand_bias_ratio", stats.strand_bias_ratio)?;
+    result.set_item("total_reads", stats.total_reads)?;
+    result.set_item("mapped_reads", stats.mapped_reads)?;
+
+    Ok(result)
+}
+
 /// Python module definition
 #[cfg(feature = "python")]
 #[pymodule]
@@ -901,6 +1034,7 @@ fn _annorefine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(bam2hints_convert, m)?)?;
     m.add_function(wrap_pyfunction!(join_hints, m)?)?;
     m.add_function(wrap_pyfunction!(filter_hints, m)?)?;
+    m.add_function(wrap_pyfunction!(detect_library_type, m)?)?;
     m.add_function(wrap_pyfunction!(version, m)?)?;
     m.add_function(wrap_pyfunction!(current_num_threads, m)?)?;
     m.add_function(wrap_pyfunction!(test_interruptible_operation, m)?)?;
