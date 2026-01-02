@@ -58,7 +58,8 @@ mod tests {
         // Test that version info is available
         let version = env!("CARGO_PKG_VERSION");
         assert!(!version.is_empty());
-        assert!(version.contains("2025"));
+        // Version should be in CalVer format (YYYY.MM.*)
+        assert!(version.contains("202") && (version.contains("2025") || version.contains("2026")));
     }
 }
 
