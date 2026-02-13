@@ -238,8 +238,14 @@ impl RefinementEngine {
         let gene_interval = gene_model.interval();
         let extended_interval = self.extend_interval_for_analysis(&gene_interval);
 
-        let splice_junctions = bam_reader.get_splice_junctions_in_region_with_library_type(&extended_interval, self.config.library_type)?;
-        let coverage = bam_reader.get_coverage_in_region_with_library_type(&extended_interval, self.config.library_type)?;
+        let splice_junctions = bam_reader.get_splice_junctions_in_region_with_library_type(
+            &extended_interval,
+            self.config.library_type,
+        )?;
+        let coverage = bam_reader.get_coverage_in_region_with_library_type(
+            &extended_interval,
+            self.config.library_type,
+        )?;
 
         // Track if any transcript has structural changes
         let mut gene_has_structural_changes = false;
@@ -285,7 +291,10 @@ impl RefinementEngine {
         genome: &Genome,
         strand_bias: StrandBias,
     ) -> Result<RefinementSummary> {
-        debug!("Refining gene: {} (strand bias: {})", gene_model.id, strand_bias);
+        debug!(
+            "Refining gene: {} (strand bias: {})",
+            gene_model.id, strand_bias
+        );
 
         let mut summary = RefinementSummary::new();
 
@@ -293,8 +302,14 @@ impl RefinementEngine {
         let gene_interval = gene_model.interval();
         let extended_interval = self.extend_interval_for_analysis(&gene_interval);
 
-        let splice_junctions = bam_reader.get_splice_junctions_in_region_with_library_type(&extended_interval, self.config.library_type)?;
-        let coverage = bam_reader.get_coverage_in_region_with_library_type(&extended_interval, self.config.library_type)?;
+        let splice_junctions = bam_reader.get_splice_junctions_in_region_with_library_type(
+            &extended_interval,
+            self.config.library_type,
+        )?;
+        let coverage = bam_reader.get_coverage_in_region_with_library_type(
+            &extended_interval,
+            self.config.library_type,
+        )?;
 
         // Track if any transcript has structural changes
         let mut gene_has_structural_changes = false;
@@ -421,11 +436,8 @@ impl RefinementEngine {
         let _original_transcript = transcript.clone();
 
         // Filter splice junctions based on strand bias if data is stranded
-        let filtered_splice_junctions = self.filter_splice_junctions_by_strand(
-            splice_junctions,
-            strand,
-            strand_bias,
-        );
+        let filtered_splice_junctions =
+            self.filter_splice_junctions_by_strand(splice_junctions, strand, strand_bias);
 
         // 1. Refine intron/exon structure based on strand-filtered splice junctions
         let structure_changed = self.refine_exon_structure_with_strand_bias(
@@ -744,7 +756,7 @@ impl RefinementEngine {
             region,
             dynamic_threshold,
             is_forward,
-            true // is_five_prime
+            true, // is_five_prime
         )?;
 
         // Apply 5' UTR trimming if needed
@@ -764,7 +776,12 @@ impl RefinementEngine {
             };
 
             if five_prime_extension >= MIN_CHANGE_LENGTH {
-                self.apply_five_prime_extension(transcript, five_prime_extension, is_forward, gene_id)?;
+                self.apply_five_prime_extension(
+                    transcript,
+                    five_prime_extension,
+                    is_forward,
+                    gene_id,
+                )?;
                 result.five_prime_extended = true;
                 debug!(
                     "Extended 5' UTR for transcript {} by {} bp using threshold {}",
@@ -780,7 +797,7 @@ impl RefinementEngine {
             region,
             dynamic_threshold,
             is_forward,
-            false // is_five_prime
+            false, // is_five_prime
         )?;
 
         // Apply 3' UTR trimming if needed
@@ -1124,7 +1141,8 @@ impl RefinementEngine {
             // Trim last exon from downstream end (move end upstream)
             let last_idx = transcript.exons.len() - 1;
             let original_end = transcript.exons[last_idx].end;
-            transcript.exons[last_idx].end = transcript.exons[last_idx].end.saturating_sub(trim_length);
+            transcript.exons[last_idx].end =
+                transcript.exons[last_idx].end.saturating_sub(trim_length);
 
             // Ensure we don't trim past the exon start
             if transcript.exons[last_idx].end <= transcript.exons[last_idx].start {
@@ -1135,7 +1153,11 @@ impl RefinementEngine {
             if actual_trim > 0 {
                 debug!(
                     "Trimmed 5' UTR for transcript {} (gene {}) by {} bp: {} -> {}",
-                    transcript.id, gene_id, actual_trim, original_end, transcript.exons[last_idx].end
+                    transcript.id,
+                    gene_id,
+                    actual_trim,
+                    original_end,
+                    transcript.exons[last_idx].end
                 );
             }
         }
@@ -1159,7 +1181,8 @@ impl RefinementEngine {
             // Trim last exon from downstream end (move end upstream)
             let last_idx = transcript.exons.len() - 1;
             let original_end = transcript.exons[last_idx].end;
-            transcript.exons[last_idx].end = transcript.exons[last_idx].end.saturating_sub(trim_length);
+            transcript.exons[last_idx].end =
+                transcript.exons[last_idx].end.saturating_sub(trim_length);
 
             // Ensure we don't trim past the exon start
             if transcript.exons[last_idx].end <= transcript.exons[last_idx].start {
@@ -1170,7 +1193,11 @@ impl RefinementEngine {
             if actual_trim > 0 {
                 debug!(
                     "Trimmed 3' UTR for transcript {} (gene {}) by {} bp: {} -> {}",
-                    transcript.id, gene_id, actual_trim, original_end, transcript.exons[last_idx].end
+                    transcript.id,
+                    gene_id,
+                    actual_trim,
+                    original_end,
+                    transcript.exons[last_idx].end
                 );
             }
         } else {
@@ -1295,7 +1322,9 @@ impl RefinementEngine {
         let extension_end = if is_forward {
             current_five_prime_pos.saturating_sub(1)
         } else {
-            region.end.min(current_five_prime_pos + self.config.max_utr_extension as u64)
+            region
+                .end
+                .min(current_five_prime_pos + self.config.max_utr_extension as u64)
         };
 
         if extension_start >= extension_end {
@@ -1362,7 +1391,9 @@ impl RefinementEngine {
         };
 
         let extension_end = if is_forward {
-            region.end.min(current_three_prime_pos + self.config.max_utr_extension as u64)
+            region
+                .end
+                .min(current_three_prime_pos + self.config.max_utr_extension as u64)
         } else {
             current_three_prime_pos.saturating_sub(1)
         };
@@ -1456,7 +1487,13 @@ impl RefinementEngine {
         }
 
         // Sort junctions by position for consistent processing
-        relevant_junctions.sort_by_key(|j| if is_forward { j.donor_pos } else { j.acceptor_pos });
+        relevant_junctions.sort_by_key(|j| {
+            if is_forward {
+                j.donor_pos
+            } else {
+                j.acceptor_pos
+            }
+        });
 
         debug!(
             "Found {} relevant splice junctions for {} UTR extension",
@@ -1572,9 +1609,17 @@ impl RefinementEngine {
                     gene_id,
                     &transcript.id,
                     "5PRIME_JUNCTION",
-                    if is_forward { transcript.exons[1].start } else { transcript.exons[transcript.exons.len()-2].end },
+                    if is_forward {
+                        transcript.exons[1].start
+                    } else {
+                        transcript.exons[transcript.exons.len() - 2].end
+                    },
                     if is_forward { exon_start } else { exon_end },
-                    if is_forward { transcript.exons[1].start - exon_start } else { exon_end - transcript.exons[transcript.exons.len()-2].end },
+                    if is_forward {
+                        transcript.exons[1].start - exon_start
+                    } else {
+                        exon_end - transcript.exons[transcript.exons.len() - 2].end
+                    },
                 );
             }
         }
@@ -1583,7 +1628,9 @@ impl RefinementEngine {
             transcript.update_boundaries();
             debug!(
                 "Extended 5' UTR for transcript {} from {} to {} exons using splice junctions",
-                transcript.id, original_exon_count, transcript.exons.len()
+                transcript.id,
+                original_exon_count,
+                transcript.exons.len()
             );
         }
 
@@ -1682,9 +1729,17 @@ impl RefinementEngine {
                     gene_id,
                     &transcript.id,
                     "3PRIME_JUNCTION",
-                    if is_forward { transcript.exons[transcript.exons.len()-2].end } else { transcript.exons[1].start },
+                    if is_forward {
+                        transcript.exons[transcript.exons.len() - 2].end
+                    } else {
+                        transcript.exons[1].start
+                    },
                     if is_forward { exon_end } else { exon_start },
-                    if is_forward { exon_end - transcript.exons[transcript.exons.len()-2].end } else { transcript.exons[1].start - exon_start },
+                    if is_forward {
+                        exon_end - transcript.exons[transcript.exons.len() - 2].end
+                    } else {
+                        transcript.exons[1].start - exon_start
+                    },
                 );
             }
         }
@@ -1693,7 +1748,9 @@ impl RefinementEngine {
             transcript.update_boundaries();
             debug!(
                 "Extended 3' UTR for transcript {} from {} to {} exons using splice junctions",
-                transcript.id, original_exon_count, transcript.exons.len()
+                transcript.id,
+                original_exon_count,
+                transcript.exons.len()
             );
         }
 
@@ -1878,7 +1935,8 @@ impl RefinementEngine {
             end: chromosome_length,
             strand: Strand::Forward, // This parameter is not used for junction extraction
         };
-        let splice_junctions = bam_reader.get_splice_junctions_in_region_with_library_type(&region, self.config.library_type)?;
+        let splice_junctions = bam_reader
+            .get_splice_junctions_in_region_with_library_type(&region, self.config.library_type)?;
 
         debug!(
             "Found {} total splice junctions on chromosome {}",
@@ -2624,5 +2682,3 @@ fn is_valid_donor_site(motif: &str) -> bool {
 fn is_valid_acceptor_site(motif: &str) -> bool {
     matches!(motif, "AG" | "AC")
 }
-
-

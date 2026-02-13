@@ -95,11 +95,8 @@ impl BamReader {
         );
 
         // Apply library type filtering based on gene strand
-        let filtered_alignments = filter_alignments_by_library_type(
-            alignments,
-            region.strand,
-            library_type,
-        );
+        let filtered_alignments =
+            filter_alignments_by_library_type(alignments, region.strand, library_type);
 
         debug!(
             "After library type filtering: {} alignments (library type: {})",
@@ -115,7 +112,10 @@ impl BamReader {
         &mut self,
         region: &GenomicInterval,
     ) -> Result<Vec<SpliceJunction>> {
-        self.get_splice_junctions_in_region_with_library_type(region, crate::types::LibraryType::Auto)
+        self.get_splice_junctions_in_region_with_library_type(
+            region,
+            crate::types::LibraryType::Auto,
+        )
     }
 
     /// Get splice junctions from alignments in a region with library type filtering
@@ -265,16 +265,14 @@ pub fn parse_bam_record(record: &bam::Record, header: &bam::HeaderView) -> Resul
     let mapping_quality = record.mapq();
 
     // Extract NH tag (number of reported alignments) if present
-    let num_hits = record.aux(b"NH").ok().and_then(|aux| {
-        match aux {
-            rust_htslib::bam::record::Aux::U8(v) => Some(v as u32),
-            rust_htslib::bam::record::Aux::U16(v) => Some(v as u32),
-            rust_htslib::bam::record::Aux::U32(v) => Some(v),
-            rust_htslib::bam::record::Aux::I8(v) => Some(v as u32),
-            rust_htslib::bam::record::Aux::I16(v) => Some(v as u32),
-            rust_htslib::bam::record::Aux::I32(v) => Some(v as u32),
-            _ => None,
-        }
+    let num_hits = record.aux(b"NH").ok().and_then(|aux| match aux {
+        rust_htslib::bam::record::Aux::U8(v) => Some(v as u32),
+        rust_htslib::bam::record::Aux::U16(v) => Some(v as u32),
+        rust_htslib::bam::record::Aux::U32(v) => Some(v),
+        rust_htslib::bam::record::Aux::I8(v) => Some(v as u32),
+        rust_htslib::bam::record::Aux::I16(v) => Some(v as u32),
+        rust_htslib::bam::record::Aux::I32(v) => Some(v as u32),
+        _ => None,
     });
 
     // Extract paired-end information from BAM flags
@@ -508,11 +506,8 @@ fn detect_strand_bias_with_gene_models<P: AsRef<Path>>(
     );
 
     // Sample alignments from selected gene models
-    let sampled_alignments = sample_alignments_from_gene_models(
-        bam_path,
-        gene_models,
-        max_reads_for_strand_detection,
-    )?;
+    let sampled_alignments =
+        sample_alignments_from_gene_models(bam_path, gene_models, max_reads_for_strand_detection)?;
 
     // Calculate statistics from sampled alignments
     calculate_stats_from_alignments(sampled_alignments, strand_bias_threshold)
@@ -582,11 +577,8 @@ fn detect_strand_bias_sequential<P: AsRef<Path>>(
     }
 
     // Calculate strand bias
-    let (strand_bias, strand_bias_ratio) = detect_strand_bias(
-        forward_reads,
-        reverse_reads,
-        strand_bias_threshold,
-    );
+    let (strand_bias, strand_bias_ratio) =
+        detect_strand_bias(forward_reads, reverse_reads, strand_bias_threshold);
 
     Ok(AlignmentStats {
         total_reads,
@@ -677,10 +669,7 @@ fn sample_alignments_from_gene_models<P: AsRef<Path>>(
                 );
             }
             Err(e) => {
-                debug!(
-                    "Failed to get alignments from gene {}: {}",
-                    gene.id, e
-                );
+                debug!("Failed to get alignments from gene {}: {}", gene.id, e);
             }
         }
     }
@@ -759,7 +748,8 @@ fn calculate_stats_from_alignments(
 
     debug!(
         "Library type detected: {} ({:.1}% forward reads from forward genes, first-in-pair only)",
-        library_type, forward_ratio * 100.0
+        library_type,
+        forward_ratio * 100.0
     );
 
     Ok(AlignmentStats {
@@ -775,11 +765,7 @@ fn calculate_stats_from_alignments(
 }
 
 /// Detect strand bias from forward and reverse read counts
-fn detect_strand_bias(
-    forward_reads: u64,
-    reverse_reads: u64,
-    threshold: f64,
-) -> (StrandBias, f64) {
+fn detect_strand_bias(forward_reads: u64, reverse_reads: u64, threshold: f64) -> (StrandBias, f64) {
     let total_mapped = forward_reads + reverse_reads;
 
     if total_mapped == 0 {
@@ -853,13 +839,9 @@ pub fn filter_alignments_by_library_type(
     gene_strand: Strand,
     library_type: crate::types::LibraryType,
 ) -> Vec<RnaSeqAlignment> {
-
-
     alignments
         .into_iter()
-        .filter(|alignment| {
-            should_use_alignment_for_gene(alignment, gene_strand, library_type)
-        })
+        .filter(|alignment| should_use_alignment_for_gene(alignment, gene_strand, library_type))
         .collect()
 }
 

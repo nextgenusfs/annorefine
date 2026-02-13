@@ -15,7 +15,7 @@ use crate::{
     hints_output::HintsWriter,
     output::Gff3Writer,
     refinement::RefinementEngine,
-    types::{RefinementConfig, Bam2HintsConfig, LibraryType, StrandBias},
+    types::{Bam2HintsConfig, LibraryType, RefinementConfig, StrandBias},
 };
 
 /// Python wrapper for RefinementConfig
@@ -123,7 +123,10 @@ impl From<PyRefinementConfig> for RefinementConfig {
             validate_splice_sites: py_config.validate_splice_sites,
             strand_bias_threshold: py_config.strand_bias_threshold,
             max_reads_for_strand_detection: py_config.max_reads_for_strand_detection,
-            library_type: py_config.library_type.parse().unwrap_or(crate::types::LibraryType::Auto),
+            library_type: py_config
+                .library_type
+                .parse()
+                .unwrap_or(crate::types::LibraryType::Auto),
         }
     }
 }
@@ -371,7 +374,21 @@ pub fn refine_annotations<'py>(
 
     // Use provided config or default
     let rust_config: RefinementConfig = config
-        .unwrap_or_else(|| PyRefinementConfig::new(5, 3, 1000, false, 10, 300, 50, true, 0.65, 10000, "auto".to_string()))
+        .unwrap_or_else(|| {
+            PyRefinementConfig::new(
+                5,
+                3,
+                1000,
+                false,
+                10,
+                300,
+                50,
+                true,
+                0.65,
+                10000,
+                "auto".to_string(),
+            )
+        })
         .into();
 
     // Load genome
@@ -386,7 +403,8 @@ pub fn refine_annotations<'py>(
 
     // Store original contig names and apply mapping for BAM queries if provided
     let contig_mapping = contig_map.unwrap_or_else(|| std::collections::HashMap::new());
-    let mut original_contigs: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut original_contigs: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
 
     if !contig_mapping.is_empty() {
         for gene in &mut gene_models {
@@ -521,7 +539,30 @@ pub fn bam2hints_convert<'py>(
 
     // Use provided config or create default with required library_type
     let rust_config: Bam2HintsConfig = config
-        .unwrap_or_else(|| PyBam2HintsConfig::new(library_type.to_string(), 4, 14, 32, 350000, 8, 5, 10, "E".to_string(), false, false, false, 0, false, false, 0.0, 400000, 0, false, None))
+        .unwrap_or_else(|| {
+            PyBam2HintsConfig::new(
+                library_type.to_string(),
+                4,
+                14,
+                32,
+                350000,
+                8,
+                5,
+                10,
+                "E".to_string(),
+                false,
+                false,
+                false,
+                0,
+                false,
+                false,
+                0.0,
+                400000,
+                0,
+                false,
+                None,
+            )
+        })
         .into();
 
     // Set up threading - create a custom thread pool if specified
@@ -551,17 +592,35 @@ pub fn bam2hints_convert<'py>(
     let filter_region = region.clone();
 
     // Process BAM file with interrupt handling and optional threading
-    let (processed_count, hints_count, total_hints) = py.allow_threads(|| {
-        // Set up thread pool if specified
-        if let Some(pool) = thread_pool {
-            pool.install(|| process_bam_for_hints(bam_file, output_file, rust_config, filter_contig, filter_region))
-        } else {
-            process_bam_for_hints(bam_file, output_file, rust_config, filter_contig, filter_region)
-        }
-    })
-    .map_err(|e: anyhow::Error| {
-        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("BAM processing failed: {:?}", e))
-    })?;
+    let (processed_count, hints_count, total_hints) = py
+        .allow_threads(|| {
+            // Set up thread pool if specified
+            if let Some(pool) = thread_pool {
+                pool.install(|| {
+                    process_bam_for_hints(
+                        bam_file,
+                        output_file,
+                        rust_config,
+                        filter_contig,
+                        filter_region,
+                    )
+                })
+            } else {
+                process_bam_for_hints(
+                    bam_file,
+                    output_file,
+                    rust_config,
+                    filter_contig,
+                    filter_region,
+                )
+            }
+        })
+        .map_err(|e: anyhow::Error| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "BAM processing failed: {:?}",
+                e
+            ))
+        })?;
 
     // Create result dictionary
     let result = PyDict::new_bound(py);
@@ -569,7 +628,35 @@ pub fn bam2hints_convert<'py>(
     result.set_item("alignments_with_hints", hints_count)?;
     result.set_item("total_hints_generated", total_hints)?;
     result.set_item("output_file", output_file)?;
-    result.set_item("config", config_clone.unwrap_or_else(|| PyBam2HintsConfig::new(library_type.to_string(), 4, 14, 32, 350000, 8, 5, 10, "E".to_string(), false, false, false, 0, false, false, 0.0, 400000, 0, false, None)).into_py(py))?;
+    result.set_item(
+        "config",
+        config_clone
+            .unwrap_or_else(|| {
+                PyBam2HintsConfig::new(
+                    library_type.to_string(),
+                    4,
+                    14,
+                    32,
+                    350000,
+                    8,
+                    5,
+                    10,
+                    "E".to_string(),
+                    false,
+                    false,
+                    false,
+                    0,
+                    false,
+                    false,
+                    0.0,
+                    400000,
+                    0,
+                    false,
+                    None,
+                )
+            })
+            .into_py(py),
+    )?;
 
     Ok(result)
 }
@@ -664,24 +751,26 @@ pub fn join_hints<'py>(
     output_file: &str,
     introns_only: bool,
 ) -> PyResult<Bound<'py, PyDict>> {
-    use std::io::{BufRead, BufReader, Write};
     use std::fs::File;
+    use std::io::{BufRead, BufReader, Write};
 
     // Read all hints from all input files
     let mut all_hints: Vec<String> = Vec::new();
     let mut total_input_hints = 0;
 
     for input_file in &input_files {
-        let file = File::open(input_file)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(
-                format!("Failed to open input file {}: {}", input_file, e)
-            ))?;
+        let file = File::open(input_file).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+                "Failed to open input file {}: {}",
+                input_file, e
+            ))
+        })?;
         let reader = BufReader::new(file);
 
         for line in reader.lines() {
-            let line = line.map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(
-                format!("Failed to read line: {}", e)
-            ))?;
+            let line = line.map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to read line: {}", e))
+            })?;
 
             // Skip empty lines and comments
             if line.trim().is_empty() || line.starts_with('#') {
@@ -704,7 +793,8 @@ pub fn join_hints<'py>(
         }
 
         // Compare: chromosome (0), start (3), end (4), feature (2), strand (6), frame (7)
-        fields_a[0].cmp(fields_b[0])
+        fields_a[0]
+            .cmp(fields_b[0])
             .then_with(|| {
                 let start_a = fields_a[3].parse::<u64>().unwrap_or(0);
                 let start_b = fields_b[3].parse::<u64>().unwrap_or(0);
@@ -734,9 +824,7 @@ pub fn join_hints<'py>(
 
         // Extract multiplicity from attributes (column 8)
         let mut mult = 1u32;
-        if let Some(mult_match) = fields[8].split(';')
-            .find(|attr| attr.starts_with("mult="))
-        {
+        if let Some(mult_match) = fields[8].split(';').find(|attr| attr.starts_with("mult=")) {
             if let Some(mult_str) = mult_match.strip_prefix("mult=") {
                 mult = mult_str.parse::<u32>().unwrap_or(1);
             }
@@ -745,9 +833,12 @@ pub fn join_hints<'py>(
         // Check if this hint is identical to the last one
         // Compare: chromosome (0), feature (2), start (3), end (4), strand (6), frame (7)
         let is_identical = if let Some(ref lf) = last_fields {
-            fields[0] == lf[0] && fields[2] == lf[2] &&
-            fields[3] == lf[3] && fields[4] == lf[4] &&
-            fields[6] == lf[6] && fields[7] == lf[7]
+            fields[0] == lf[0]
+                && fields[2] == lf[2]
+                && fields[3] == lf[3]
+                && fields[4] == lf[4]
+                && fields[6] == lf[6]
+                && fields[7] == lf[7]
         } else {
             false
         };
@@ -772,16 +863,19 @@ pub fn join_hints<'py>(
     }
 
     // Write merged hints to output file
-    let mut writer = File::create(output_file)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(
-            format!("Failed to create output file: {}", e)
-        ))?;
+    let mut writer = File::create(output_file).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to create output file: {}", e))
+    })?;
 
     // Write header
-    writeln!(writer, "# joined hints from {} input files", input_files.len())
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(
-            format!("Failed to write header: {}", e)
-        ))?;
+    writeln!(
+        writer,
+        "# joined hints from {} input files",
+        input_files.len()
+    )
+    .map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to write header: {}", e))
+    })?;
 
     let mut output_hints = 0;
     for (mut fields, mult) in merged_hints {
@@ -793,10 +887,12 @@ pub fn join_hints<'py>(
         // Remove group attributes and old mult attribute
         fields[8] = fields[8]
             .split(';')
-            .filter(|attr| !attr.starts_with("mult=") &&
-                           !attr.starts_with("group=") &&
-                           !attr.starts_with("grp=") &&
-                           !attr.starts_with("gp="))
+            .filter(|attr| {
+                !attr.starts_with("mult=")
+                    && !attr.starts_with("group=")
+                    && !attr.starts_with("grp=")
+                    && !attr.starts_with("gp=")
+            })
             .collect::<Vec<&str>>()
             .join(";");
 
@@ -813,10 +909,9 @@ pub fn join_hints<'py>(
             fields[8].push(';');
         }
 
-        writeln!(writer, "{}", fields.join("\t"))
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(
-                format!("Failed to write hint: {}", e)
-            ))?;
+        writeln!(writer, "{}", fields.join("\t")).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to write hint: {}", e))
+        })?;
         output_hints += 1;
     }
 
@@ -842,13 +937,12 @@ pub fn filter_hints<'py>(
     min_multiplicity: u32,
     contig: Option<&str>,
 ) -> PyResult<Bound<'py, PyDict>> {
-    use std::io::{BufRead, BufReader, Write};
     use std::fs::File;
+    use std::io::{BufRead, BufReader, Write};
 
     // Parse hint types if provided
-    let filter_types: Option<Vec<String>> = hint_types.map(|types| {
-        types.iter().map(|t| t.to_lowercase()).collect()
-    });
+    let filter_types: Option<Vec<String>> =
+        hint_types.map(|types| types.iter().map(|t| t.to_lowercase()).collect());
 
     let mut total_hints = 0;
     let mut filtered_hints = 0;
@@ -906,10 +1000,11 @@ pub fn filter_hints<'py>(
             // Filter by multiplicity if specified
             if min_multiplicity > 1 {
                 // Parse multiplicity from attributes
-                let mult = if let Some(mult_str) = attributes.split(';')
-                    .find(|attr| attr.starts_with("mult="))
+                let mult = if let Some(mult_str) =
+                    attributes.split(';').find(|attr| attr.starts_with("mult="))
                 {
-                    mult_str.trim_start_matches("mult=")
+                    mult_str
+                        .trim_start_matches("mult=")
                         .parse::<u32>()
                         .unwrap_or(1)
                 } else {
@@ -1097,14 +1192,18 @@ fn process_bam_for_hints(
         let header = reader.header().clone();
 
         // Get target ID for chromosome
-        let tid = header.target_names()
+        let tid = header
+            .target_names()
             .iter()
             .position(|name| *name == chr.as_bytes())
             .ok_or_else(|| anyhow::anyhow!("Chromosome '{}' not found in BAM header", chr))?;
 
         // Fetch region (convert to 0-based for BAM)
-        reader.fetch((tid as u32, start.saturating_sub(1), end))
-            .map_err(|e| anyhow::anyhow!("Failed to fetch region {}:{}-{}: {}", chr, start, end, e))?;
+        reader
+            .fetch((tid as u32, start.saturating_sub(1), end))
+            .map_err(|e| {
+                anyhow::anyhow!("Failed to fetch region {}:{}-{}: {}", chr, start, end, e)
+            })?;
 
         // Process alignments in region
         for result in reader.records() {
@@ -1124,12 +1223,10 @@ fn process_bam_for_hints(
 
             // Parse BAM record into RnaSeqAlignment
             match crate::bam::parse_bam_record(&record, &header) {
-                Ok(alignment) => {
-                    match converter.process_alignment(&alignment) {
-                        Ok(_) => hints_count += 1,
-                        Err(_) => continue,
-                    }
-                }
+                Ok(alignment) => match converter.process_alignment(&alignment) {
+                    Ok(_) => hints_count += 1,
+                    Err(_) => continue,
+                },
                 Err(_) => continue,
             }
         }
@@ -1150,18 +1247,21 @@ fn process_bam_for_hints(
             let header = indexed_reader.header().clone();
 
             // Get target ID for chromosome
-            let tid = header.target_names()
+            let tid = header
+                .target_names()
                 .iter()
                 .position(|name| *name == contig.as_bytes())
                 .ok_or_else(|| anyhow::anyhow!("Contig '{}' not found in BAM header", contig))?;
 
             // Fetch entire contig
-            indexed_reader.fetch(tid as u32)
+            indexed_reader
+                .fetch(tid as u32)
                 .map_err(|e| anyhow::anyhow!("Failed to fetch contig {}: {}", contig, e))?;
 
             // Process alignments in contig
             for result in indexed_reader.records() {
-                let record = result.map_err(|e| anyhow::anyhow!("Failed to read BAM record: {}", e))?;
+                let record =
+                    result.map_err(|e| anyhow::anyhow!("Failed to read BAM record: {}", e))?;
 
                 if record.is_unmapped() || record.is_secondary() || record.is_duplicate() {
                     continue;
@@ -1170,19 +1270,18 @@ fn process_bam_for_hints(
                 processed_count += 1;
 
                 match crate::bam::parse_bam_record(&record, &header) {
-                    Ok(alignment) => {
-                        match converter.process_alignment(&alignment) {
-                            Ok(_) => hints_count += 1,
-                            Err(_) => continue,
-                        }
-                    }
+                    Ok(alignment) => match converter.process_alignment(&alignment) {
+                        Ok(_) => hints_count += 1,
+                        Err(_) => continue,
+                    },
                     Err(_) => continue,
                 }
             }
         } else {
             // Process all alignments
             for result in reader.records() {
-                let record = result.map_err(|e| anyhow::anyhow!("Failed to read BAM record: {}", e))?;
+                let record =
+                    result.map_err(|e| anyhow::anyhow!("Failed to read BAM record: {}", e))?;
 
                 if record.is_unmapped() || record.is_secondary() || record.is_duplicate() {
                     continue;
@@ -1191,12 +1290,10 @@ fn process_bam_for_hints(
                 processed_count += 1;
 
                 match crate::bam::parse_bam_record(&record, &header) {
-                    Ok(alignment) => {
-                        match converter.process_alignment(&alignment) {
-                            Ok(_) => hints_count += 1,
-                            Err(_) => continue,
-                        }
-                    }
+                    Ok(alignment) => match converter.process_alignment(&alignment) {
+                        Ok(_) => hints_count += 1,
+                        Err(_) => continue,
+                    },
                     Err(_) => continue,
                 }
             }
@@ -1219,18 +1316,24 @@ fn process_bam_for_hints(
     // Write hints to output file
     let output_file_handle = std::fs::File::create(output_file)
         .map_err(|e| anyhow::anyhow!("Failed to create output file: {}", e))?;
-    let mut writer = HintsWriter::new_with_contig_map(output_file_handle, rust_config.contig_map.clone());
+    let mut writer =
+        HintsWriter::new_with_contig_map(output_file_handle, rust_config.contig_map.clone());
 
     // Write header (matching CLI behavior)
     let config_summary = format!(
         "priority={}, source={}, introns_only={}, max_coverage={}",
-        rust_config.priority, rust_config.source, rust_config.introns_only, rust_config.max_coverage
+        rust_config.priority,
+        rust_config.source,
+        rust_config.introns_only,
+        rust_config.max_coverage
     );
-    writer.write_header(bam_file, &config_summary)
+    writer
+        .write_header(bam_file, &config_summary)
         .map_err(|e| anyhow::anyhow!("Failed to write header: {:?}", e))?;
 
     // Sort hints by chromosome order (matching CLI behavior)
-    writer.write_hints_sorted_by_chromosome_order(hints, &chromosomes)
+    writer
+        .write_hints_sorted_by_chromosome_order(hints, &chromosomes)
         .map_err(|e| anyhow::anyhow!("Failed to write hints: {:?}", e))?;
 
     Ok((processed_count, hints_count, writer.hints_written))

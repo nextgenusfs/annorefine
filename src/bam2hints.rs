@@ -1,11 +1,11 @@
 //! BAM to hints conversion functionality for Augustus gene prediction
-//! 
+//!
 //! This module implements the core algorithms to convert BAM alignments into
 //! hints for Augustus gene prediction, similar to the original bam2hints tool.
 
 use crate::types::{
-    AlignmentBlock, AugustusHint, Bam2HintsConfig, FilteredBlock, HintType, Result, 
-    RnaSeqAlignment, Strand, AnnoRefineError
+    AlignmentBlock, AnnoRefineError, AugustusHint, Bam2HintsConfig, FilteredBlock, HintType,
+    Result, RnaSeqAlignment, Strand,
 };
 use log::{debug, warn};
 
@@ -40,8 +40,10 @@ impl Bam2HintsConverter {
     pub fn process_alignment(&mut self, alignment: &RnaSeqAlignment) -> Result<()> {
         // Filter by mapping quality
         if alignment.mapping_quality < self.config.min_mapping_quality {
-            debug!("Dropping alignment {} - mapping quality {} below threshold {}",
-                   alignment.read_name, alignment.mapping_quality, self.config.min_mapping_quality);
+            debug!(
+                "Dropping alignment {} - mapping quality {} below threshold {}",
+                alignment.read_name, alignment.mapping_quality, self.config.min_mapping_quality
+            );
             return Ok(());
         }
 
@@ -49,8 +51,10 @@ impl Bam2HintsConverter {
         if self.config.filter_multimappers {
             if let Some(num_hits) = alignment.num_hits {
                 if num_hits > 1 {
-                    debug!("Dropping alignment {} - multi-mapper with {} hits",
-                           alignment.read_name, num_hits);
+                    debug!(
+                        "Dropping alignment {} - multi-mapper with {} hits",
+                        alignment.read_name, num_hits
+                    );
                     return Ok(());
                 }
             }
@@ -63,23 +67,27 @@ impl Bam2HintsConverter {
 
         // Parse CIGAR to extract alignment blocks (similar to PSL format)
         let blocks = self.parse_cigar_to_blocks(alignment)?;
-        
+
         if blocks.is_empty() {
             return Ok(());
         }
 
         // Check if alignment exceeds maximum gene length
-        let alignment_span = blocks.last().unwrap().target_start + blocks.last().unwrap().length as u64 
-                            - blocks.first().unwrap().target_start;
-        
+        let alignment_span = blocks.last().unwrap().target_start
+            + blocks.last().unwrap().length as u64
+            - blocks.first().unwrap().target_start;
+
         if alignment_span > self.config.max_gene_len as u64 {
-            debug!("Dropping alignment {} - exceeds max gene length", alignment.read_name);
+            debug!(
+                "Dropping alignment {} - exceeds max gene length",
+                alignment.read_name
+            );
             return Ok(());
         }
 
         // Filter blocks based on gap lengths and quality criteria
         let filtered_blocks = self.filter_blocks(&blocks)?;
-        
+
         if filtered_blocks.is_empty() {
             return Ok(());
         }
@@ -155,7 +163,10 @@ impl Bam2HintsConverter {
                 // We only process first-in-pair reads, and their alignment strand is opposite to gene strand
                 if alignment.is_paired {
                     // Should only be first-in-pair reads due to filtering in should_process_alignment
-                    debug_assert!(alignment.is_first_in_pair, "RF library should only process first-in-pair reads");
+                    debug_assert!(
+                        alignment.is_first_in_pair,
+                        "RF library should only process first-in-pair reads"
+                    );
                     // First-in-pair: alignment strand is opposite to gene strand
                     match alignment.strand {
                         Strand::Forward => Strand::Reverse,
@@ -193,8 +204,9 @@ impl Bam2HintsConverter {
                     // Match/mismatch - this is an aligned block
                     if let Some(last_block) = blocks.last_mut() {
                         // Check if we can extend the previous block
-                        if last_block.target_start + last_block.length as u64 == target_offset &&
-                           last_block.query_start + last_block.length as u64 == query_offset {
+                        if last_block.target_start + last_block.length as u64 == target_offset
+                            && last_block.query_start + last_block.length as u64 == query_offset
+                        {
                             // Extend existing block
                             last_block.length += length;
                         } else {
@@ -213,7 +225,7 @@ impl Bam2HintsConverter {
                             target_start: target_offset,
                         });
                     }
-                    
+
                     query_offset += length as u64;
                     target_offset += length as u64;
                 }
@@ -277,12 +289,15 @@ impl Bam2HintsConverter {
             let block_end = block.target_start + block.length as u64 - 1;
 
             // Decide based on gap length
-            if gap_len >= self.config.min_intron_len as u64 && gap_len <= self.config.max_intron_len as u64 {
+            if gap_len >= self.config.min_intron_len as u64
+                && gap_len <= self.config.max_intron_len as u64
+            {
                 // Gap represents an intron, add new block
                 let following_intron_ok = if i < blocks.len() - 1 {
                     // Check query gap length for next block
                     let next_block = &blocks[i + 1];
-                    let query_gap = next_block.query_start - (block.query_start + block.length as u64);
+                    let query_gap =
+                        next_block.query_start - (block.query_start + block.length as u64);
                     query_gap <= self.config.max_query_gap_len as u64
                 } else {
                     false
@@ -297,12 +312,14 @@ impl Bam2HintsConverter {
                 // Gap represents a deletion, expand previous block
                 if let Some(last_block) = filtered.last_mut() {
                     last_block.end = block_end;
-                    
+
                     // Update following_intron_ok
                     if i < blocks.len() - 1 {
                         let next_block = &blocks[i + 1];
-                        let query_gap = next_block.query_start - (block.query_start + block.length as u64);
-                        last_block.following_intron_ok = query_gap <= self.config.max_query_gap_len as u64;
+                        let query_gap =
+                            next_block.query_start - (block.query_start + block.length as u64);
+                        last_block.following_intron_ok =
+                            query_gap <= self.config.max_query_gap_len as u64;
                     } else {
                         last_block.following_intron_ok = false;
                     }
@@ -342,8 +359,9 @@ impl Bam2HintsConverter {
                     }
                 } else if block.end - block.start + 1 >= self.config.min_end_block_len as u64 {
                     // First block of multi-block alignment with minimum length
-                    if !self.config.introns_only &&
-                       block.end - block.start + 1 >= 2 * self.config.exonpart_cutoff as u64 {
+                    if !self.config.introns_only
+                        && block.end - block.start + 1 >= 2 * self.config.exonpart_cutoff as u64
+                    {
                         // Exonpart hint
                         let hint_start = block.start + self.config.exonpart_cutoff as u64;
                         if hint_start < block.end {
@@ -361,16 +379,27 @@ impl Bam2HintsConverter {
                     }
 
                     // Generate splice site hints if enabled
-                    if self.config.splice_sites_on && !self.config.introns_only && i < blocks.len() - 1 {
-                        self.add_splice_site_hints(chromosome, block.end, blocks[i + 1].start, strand);
+                    if self.config.splice_sites_on
+                        && !self.config.introns_only
+                        && i < blocks.len() - 1
+                    {
+                        self.add_splice_site_hints(
+                            chromosome,
+                            block.end,
+                            blocks[i + 1].start,
+                            strand,
+                        );
                     }
 
                     // Generate intron hint if conditions are met
-                    if block.following_intron_ok && i + 1 < blocks.len() &&
-                       (blocks.len() > 2 && i < blocks.len() - 2 ||
-                        (blocks[i + 1].end >= blocks[i + 1].start &&
-                         blocks[i + 1].end - blocks[i + 1].start + 1 >= self.config.min_end_block_len as u64)) &&
-                       blocks[i + 1].start > 0 {
+                    if block.following_intron_ok
+                        && i + 1 < blocks.len()
+                        && (blocks.len() > 2 && i < blocks.len() - 2
+                            || (blocks[i + 1].end >= blocks[i + 1].start
+                                && blocks[i + 1].end - blocks[i + 1].start + 1
+                                    >= self.config.min_end_block_len as u64))
+                        && blocks[i + 1].start > 0
+                    {
                         let hint = AugustusHint::new(
                             chromosome.to_string(),
                             block.end + 1,
@@ -385,8 +414,9 @@ impl Bam2HintsConverter {
                 }
             } else if i == blocks.len() - 1 && !self.config.introns_only {
                 // Last block of multi-block alignment
-                if block.end - block.start + 1 >= self.config.min_end_block_len as u64 &&
-                   block.end - block.start + 1 >= 2 * self.config.exonpart_cutoff as u64 {
+                if block.end - block.start + 1 >= self.config.min_end_block_len as u64
+                    && block.end - block.start + 1 >= 2 * self.config.exonpart_cutoff as u64
+                {
                     let hint_end = block.end - self.config.exonpart_cutoff as u64;
                     if hint_end > block.start {
                         let hint = AugustusHint::new(
@@ -417,11 +447,14 @@ impl Bam2HintsConverter {
                 }
 
                 // Generate intron hint if conditions are met
-                if block.following_intron_ok && i + 1 < blocks.len() &&
-                   (blocks.len() > 2 && i < blocks.len() - 2 ||
-                    (blocks[i + 1].end >= blocks[i + 1].start &&
-                     blocks[i + 1].end - blocks[i + 1].start + 1 >= self.config.min_end_block_len as u64)) &&
-                   blocks[i + 1].start > 0 {
+                if block.following_intron_ok
+                    && i + 1 < blocks.len()
+                    && (blocks.len() > 2 && i < blocks.len() - 2
+                        || (blocks[i + 1].end >= blocks[i + 1].start
+                            && blocks[i + 1].end - blocks[i + 1].start + 1
+                                >= self.config.min_end_block_len as u64))
+                    && blocks[i + 1].start > 0
+                {
                     let hint = AugustusHint::new(
                         chromosome.to_string(),
                         block.end + 1,
@@ -435,7 +468,12 @@ impl Bam2HintsConverter {
 
                     // Generate splice site hints if enabled
                     if self.config.splice_sites_on && !self.config.introns_only {
-                        self.add_splice_site_hints(chromosome, block.end, blocks[i + 1].start, strand);
+                        self.add_splice_site_hints(
+                            chromosome,
+                            block.end,
+                            blocks[i + 1].start,
+                            strand,
+                        );
                     }
                 }
             }
@@ -445,7 +483,13 @@ impl Bam2HintsConverter {
     }
 
     /// Add splice site hints for donor and acceptor sites
-    fn add_splice_site_hints(&mut self, chromosome: &str, donor_end: u64, acceptor_start: u64, strand: Strand) {
+    fn add_splice_site_hints(
+        &mut self,
+        chromosome: &str,
+        donor_end: u64,
+        acceptor_start: u64,
+        strand: Strand,
+    ) {
         // Donor splice site (end of exon + 1)
         let dss_hint = AugustusHint::new(
             chromosome.to_string(),
@@ -505,14 +549,21 @@ impl Bam2HintsConverter {
     }
 
     /// Reclassify exonpart hints that are flanked by introns as exon hints
-    fn reclassify_internal_exons(&self, other_hints: &mut Vec<AugustusHint>, intron_hints: &[AugustusHint]) {
+    fn reclassify_internal_exons(
+        &self,
+        other_hints: &mut Vec<AugustusHint>,
+        intron_hints: &[AugustusHint],
+    ) {
         // Group introns by chromosome and strand for efficient lookup
         use std::collections::HashMap;
         let mut intron_map: HashMap<(String, Strand), Vec<(u64, u64)>> = HashMap::new();
 
         for intron in intron_hints {
             let key = (intron.chromosome.clone(), intron.strand);
-            intron_map.entry(key).or_insert_with(Vec::new).push((intron.start, intron.end));
+            intron_map
+                .entry(key)
+                .or_insert_with(Vec::new)
+                .push((intron.start, intron.end));
         }
 
         // Sort intron coordinates for each chromosome/strand
@@ -536,7 +587,12 @@ impl Bam2HintsConverter {
     }
 
     /// Check if a region is flanked by introns (indicating it's an internal exon)
-    fn is_flanked_by_introns(&self, exon_start: u64, exon_end: u64, introns: &[(u64, u64)]) -> bool {
+    fn is_flanked_by_introns(
+        &self,
+        exon_start: u64,
+        exon_end: u64,
+        introns: &[(u64, u64)],
+    ) -> bool {
         let mut has_upstream_intron = false;
         let mut has_downstream_intron = false;
 
@@ -582,12 +638,7 @@ impl Bam2HintsConverter {
 
         // Count occurrences of identical intron hints
         for hint in &self.hint_lists.intron_hints {
-            let key = (
-                hint.chromosome.clone(),
-                hint.start,
-                hint.end,
-                hint.strand,
-            );
+            let key = (hint.chromosome.clone(), hint.start, hint.end, hint.strand);
             *intron_counts.entry(key).or_insert(0) += 1;
         }
 
@@ -632,15 +683,18 @@ impl Bam2HintsConverter {
         all_other_hints.extend(compressed_exons);
 
         // Process splice site hints with multiplicity counting
-        let compressed_dss = Self::compress_splice_site_hints_static(&mut self.hint_lists.dss_hints, &self.config);
+        let compressed_dss =
+            Self::compress_splice_site_hints_static(&mut self.hint_lists.dss_hints, &self.config);
         all_other_hints.extend(compressed_dss);
 
-        let compressed_ass = Self::compress_splice_site_hints_static(&mut self.hint_lists.ass_hints, &self.config);
+        let compressed_ass =
+            Self::compress_splice_site_hints_static(&mut self.hint_lists.ass_hints, &self.config);
         all_other_hints.extend(compressed_ass);
 
         // Sort for deterministic output
         all_other_hints.sort_by(|a, b| {
-            a.chromosome.cmp(&b.chromosome)
+            a.chromosome
+                .cmp(&b.chromosome)
                 .then(a.start.cmp(&b.start))
                 .then(a.end.cmp(&b.end))
                 .then(a.hint_type.to_string().cmp(&b.hint_type.to_string()))
@@ -682,14 +736,23 @@ impl Bam2HintsConverter {
     }
 
     /// Compress splice site hints with multiplicity counting
-    fn compress_splice_site_hints_static(hints: &mut Vec<AugustusHint>, config: &Bam2HintsConfig) -> Vec<AugustusHint> {
+    fn compress_splice_site_hints_static(
+        hints: &mut Vec<AugustusHint>,
+        config: &Bam2HintsConfig,
+    ) -> Vec<AugustusHint> {
         use std::collections::HashMap;
 
         let mut site_counts: HashMap<(String, u64, u64, HintType, Strand), u32> = HashMap::new();
 
         // Count occurrences of each splice site
         for hint in hints.drain(..) {
-            let key = (hint.chromosome, hint.start, hint.end, hint.hint_type, hint.strand);
+            let key = (
+                hint.chromosome,
+                hint.start,
+                hint.end,
+                hint.hint_type,
+                hint.strand,
+            );
             *site_counts.entry(key).or_insert(0) += 1;
         }
 
@@ -772,19 +835,13 @@ impl Bam2HintsConverter {
         consolidated
     }
 
-
-
     /// Compress intron hints merging strand-specific introns (for unstranded libraries)
     fn compress_intron_hints_strand_neutral(&mut self) -> Vec<AugustusHint> {
         let mut intron_counts: HashMap<(String, u64, u64), u32> = HashMap::new();
 
         // Count occurrences of intron hints, ignoring strand
         for hint in &self.hint_lists.intron_hints {
-            let key = (
-                hint.chromosome.clone(),
-                hint.start,
-                hint.end,
-            );
+            let key = (hint.chromosome.clone(), hint.start, hint.end);
             *intron_counts.entry(key).or_insert(0) += 1;
         }
 
@@ -793,9 +850,7 @@ impl Bam2HintsConverter {
         let mut sorted_keys: Vec<_> = intron_counts.keys().collect();
         sorted_keys.sort_by(|a, b| {
             // Sort by chromosome, start, end
-            a.0.cmp(&b.0)
-                .then(a.1.cmp(&b.1))
-                .then(a.2.cmp(&b.2))
+            a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2))
         });
 
         for key in sorted_keys {
@@ -844,6 +899,7 @@ mod tests {
             }],
             is_paired: false,
             is_first_in_pair: false,
+            num_hits: Some(1),
         }
     }
 
@@ -914,7 +970,8 @@ mod tests {
 
         // Should generate at least one intron hint
         assert!(!hints.is_empty());
-        let intron_hints: Vec<_> = hints.iter()
+        let intron_hints: Vec<_> = hints
+            .iter()
             .filter(|h| h.hint_type == HintType::Intron)
             .collect();
         assert!(!intron_hints.is_empty());
@@ -932,7 +989,8 @@ mod tests {
         }
 
         let hints = converter.get_hints();
-        let intron_hints: Vec<_> = hints.iter()
+        let intron_hints: Vec<_> = hints
+            .iter()
             .filter(|h| h.hint_type == HintType::Intron)
             .collect();
 
@@ -954,7 +1012,10 @@ mod tests {
         );
 
         let gff_line = hint.to_gff3_line();
-        assert_eq!(gff_line, "chr1\tb2h\tintron\t1000\t2000\t0\t+\t.\tmult=5;pri=4;src=E");
+        assert_eq!(
+            gff_line,
+            "chr1\tb2h\tintron\t1000\t2000\t0\t+\t.\tmult=5;pri=4;src=E"
+        );
     }
 
     #[test]

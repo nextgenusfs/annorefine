@@ -422,7 +422,8 @@ impl std::str::FromStr for LibraryType {
             "FR" => Ok(LibraryType::PairedFR),
             "UU" => Ok(LibraryType::PairedUnstranded),
             _ => Err(AnnoRefineError::InvalidInput(format!(
-                "Invalid library type: {}. Valid options: auto, F, R, U, RF, FR, UU", s
+                "Invalid library type: {}. Valid options: auto, F, R, U, RF, FR, UU",
+                s
             ))),
         }
     }
@@ -518,13 +519,13 @@ impl std::fmt::Display for HintType {
 #[derive(Debug, Clone)]
 pub struct AugustusHint {
     pub chromosome: String,
-    pub start: u64,        // 1-based, inclusive
-    pub end: u64,          // 1-based, inclusive
+    pub start: u64, // 1-based, inclusive
+    pub end: u64,   // 1-based, inclusive
     pub hint_type: HintType,
     pub strand: Strand,
     pub score: f64,
-    pub source: String,    // Source identifier (e.g., "E" for EST, "b2h" for bam2hints)
-    pub priority: u32,     // Priority level for the hint
+    pub source: String, // Source identifier (e.g., "E" for EST, "b2h" for bam2hints)
+    pub priority: u32,  // Priority level for the hint
     pub multiplicity: u32, // Number of supporting alignments (for intron hints)
 }
 

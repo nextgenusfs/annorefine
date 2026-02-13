@@ -1,19 +1,18 @@
 //! Command-line interface for bam2hints functionality
 
-use annorefine::bam::{BamReader, parse_bam_record};
+use annorefine::bam::{parse_bam_record, BamReader};
 use annorefine::bam2hints::Bam2HintsConverter;
-use annorefine::hints_output::{HintsWriter, HintsStatistics};
+use annorefine::hints_output::{HintsStatistics, HintsWriter};
 use annorefine::logging::init_logger;
-use annorefine::types::{Bam2HintsConfig, GenomicInterval, Strand, StrandBias, LibraryType};
+use annorefine::types::{Bam2HintsConfig, GenomicInterval, LibraryType, Strand, StrandBias};
 use anyhow::Context;
 use clap::Parser;
-use log::{info, debug, warn};
+use log::{debug, info, warn};
 use rayon::prelude::*;
 use rust_htslib::bam::Read;
 use std::fs::File;
-use std::io::{Write, BufWriter};
+use std::io::{BufWriter, Write};
 use std::path::PathBuf;
-
 
 /// Convert BAM alignments to Augustus hints
 #[derive(Parser, Debug)]
@@ -108,8 +107,6 @@ pub struct Bam2HintsCommand {
     #[arg(short = 't', long = "threads")]
     pub threads: Option<usize>,
 
-
-
     /// Library strandedness specification
     /// Options: FR, RF, UU
     /// FR = paired-end forward/reverse, RF = paired-end reverse/forward, UU = paired-end unstranded
@@ -127,7 +124,10 @@ impl Bam2HintsCommand {
         // Initialize logging using the same system as UTRs command
         init_logger(self.verbose, None)?;
 
-        info!("Starting annorefine bam2hints v{}", env!("CARGO_PKG_VERSION"));
+        info!(
+            "Starting annorefine bam2hints v{}",
+            env!("CARGO_PKG_VERSION")
+        );
         info!("Input BAM: {}", self.input.display());
         info!("Output GFF: {}", self.output.display());
 
@@ -141,7 +141,10 @@ impl Bam2HintsCommand {
             info!("Using {} threads for parallel processing", num_threads);
         } else {
             let num_threads = rayon::current_num_threads();
-            info!("Using {} threads for parallel processing (auto-detected)", num_threads);
+            info!(
+                "Using {} threads for parallel processing (auto-detected)",
+                num_threads
+            );
         }
 
         // Validate input parameters
@@ -177,8 +180,10 @@ impl Bam2HintsCommand {
         info!("BAM file opened successfully");
 
         // Open output file
-        let output: Box<dyn Write> = Box::new(BufWriter::new(File::create(&self.output)
-            .with_context(|| format!("Failed to create output file: {}", self.output.display()))?));
+        let output: Box<dyn Write> =
+            Box::new(BufWriter::new(File::create(&self.output).with_context(
+                || format!("Failed to create output file: {}", self.output.display()),
+            )?));
         info!("Output file created: {}", self.output.display());
 
         // Step 3: Process BAM file and generate hints
@@ -244,10 +249,6 @@ impl Bam2HintsCommand {
         }
     }
 
-
-
-
-
     /// Process the BAM file in parallel and generate hints
     fn process_bam_file_parallel(
         &self,
@@ -275,9 +276,7 @@ impl Bam2HintsCommand {
         // Process chromosomes in parallel but collect results in BAM header order
         let chromosome_results: anyhow::Result<Vec<_>> = chromosomes
             .par_iter()
-            .map(|chromosome| {
-                self.process_chromosome_parallel(chromosome, &config)
-            })
+            .map(|chromosome| self.process_chromosome_parallel(chromosome, &config))
             .collect();
 
         let chromosome_results = chromosome_results?;
@@ -294,12 +293,20 @@ impl Bam2HintsCommand {
             _total_with_hints += with_hints;
         }
 
-        info!("Processed {} alignments total, {} generated hints", total_processed, all_hints.len());
+        info!(
+            "Processed {} alignments total, {} generated hints",
+            total_processed,
+            all_hints.len()
+        );
 
         // Apply coverage filtering if enabled and write hints
         // Sort hints using BAM header chromosome order for deterministic output
         if config.max_coverage > 0 {
-            hints_writer.write_hints_with_coverage_filter_ordered(all_hints, config.max_coverage, &chromosomes)?;
+            hints_writer.write_hints_with_coverage_filter_ordered(
+                all_hints,
+                config.max_coverage,
+                &chromosomes,
+            )?;
         } else {
             hints_writer.write_hints_sorted_by_chromosome_order(all_hints, &chromosomes)?;
         }
@@ -340,7 +347,8 @@ impl Bam2HintsCommand {
 
         // Create a region covering the entire chromosome
         // We'll get the chromosome length from the BAM header
-        let chr_length = thread_bam_reader.get_chromosome_length(chromosome)
+        let chr_length = thread_bam_reader
+            .get_chromosome_length(chromosome)
             .with_context(|| format!("Failed to get length for chromosome {}", chromosome))?;
         let region = GenomicInterval {
             chromosome: chromosome.to_string(),
@@ -352,7 +360,11 @@ impl Bam2HintsCommand {
         // Get all alignments for this chromosome
         match thread_bam_reader.get_alignments_in_region(&region) {
             Ok(alignments) => {
-                debug!("Processing {} alignments from chromosome {}", alignments.len(), chromosome);
+                debug!(
+                    "Processing {} alignments from chromosome {}",
+                    alignments.len(),
+                    chromosome
+                );
 
                 for alignment in &alignments {
                     processed_count += 1;
@@ -365,14 +377,21 @@ impl Bam2HintsCommand {
                 }
             }
             Err(e) => {
-                warn!("Failed to get alignments for chromosome {}: {}", chromosome, e);
+                warn!(
+                    "Failed to get alignments for chromosome {}: {}",
+                    chromosome, e
+                );
                 return Ok((Vec::new(), 0, 0));
             }
         }
 
         // Get generated hints
         let hints = converter.get_hints();
-        debug!("Generated {} hints from chromosome {}", hints.len(), chromosome);
+        debug!(
+            "Generated {} hints from chromosome {}",
+            hints.len(),
+            chromosome
+        );
 
         Ok((hints, processed_count, hints_count))
     }
@@ -447,7 +466,10 @@ impl Bam2HintsCommand {
             }
         }
 
-        info!("Processed {} alignments, {} generated hints", processed_count, hints_count);
+        info!(
+            "Processed {} alignments, {} generated hints",
+            processed_count, hints_count
+        );
 
         // Get generated hints
         let hints = converter.get_hints();
@@ -461,15 +483,18 @@ impl Bam2HintsCommand {
             "priority={}, source={}, introns_only={}, max_coverage={}",
             config.priority, config.source, config.introns_only, config.max_coverage
         );
-        hints_writer.write_header(input_path.to_string_lossy().as_ref(), &config_summary)
+        hints_writer
+            .write_header(input_path.to_string_lossy().as_ref(), &config_summary)
             .with_context(|| "Failed to write hints header")?;
 
         // Write hints with coverage filter if specified, using BAM header chromosome order
         if config.max_coverage > 0 {
-            hints_writer.write_hints_with_coverage_filter_ordered(hints, config.max_coverage, &chromosomes)
+            hints_writer
+                .write_hints_with_coverage_filter_ordered(hints, config.max_coverage, &chromosomes)
                 .with_context(|| "Failed to write hints with coverage filter")?;
         } else {
-            hints_writer.write_hints_sorted_by_chromosome_order(hints, &chromosomes)
+            hints_writer
+                .write_hints_sorted_by_chromosome_order(hints, &chromosomes)
                 .with_context(|| "Failed to write hints")?;
         }
 

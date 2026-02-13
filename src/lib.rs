@@ -22,11 +22,11 @@ pub mod python;
 pub use python::*;
 
 // Re-export main types for library usage
-pub use types::*;
-pub use gff3::*;
 pub use fasta::*;
-pub use refinement::*;
+pub use gff3::*;
 pub use output::*;
+pub use refinement::*;
+pub use types::*;
 
 #[cfg(test)]
 mod tests {
@@ -62,7 +62,3 @@ mod tests {
         assert!(version.contains("202") && (version.contains("2025") || version.contains("2026")));
     }
 }
-
-
-
-
