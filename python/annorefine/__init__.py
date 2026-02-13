@@ -183,6 +183,8 @@ def bam2hints(
     truncated_splice_sites: bool = False,
     score: float = 0.0,
     max_gene_len: int = 400000,
+    min_mapping_quality: int = 0,
+    filter_multimappers: bool = False,
     threads: int = None,
     contig: str = None,
     region: tuple = None,
@@ -214,6 +216,8 @@ def bam2hints(
         truncated_splice_sites: Include splice sites from truncated alignments (default: False)
         score: Score value to fill in score column (default: 0.0)
         max_gene_len: Alignments spanning more than this are ignored (default: 400000)
+        min_mapping_quality: Minimum mapping quality (MAPQ) to accept an alignment (default: 0, no filtering)
+        filter_multimappers: Filter out multi-mapping reads (reads with NH tag > 1) (default: False)
         threads: Number of threads to use for parallel processing (default: None, uses all available)
         contig: Filter to only process alignments on this contig (default: None, process all)
         region: Filter to only process alignments in this region as (contig, start, end) tuple (default: None)
@@ -271,6 +275,8 @@ def bam2hints(
         truncated_splice_sites=truncated_splice_sites,
         score=score,
         max_gene_len=max_gene_len,
+        min_mapping_quality=min_mapping_quality,
+        filter_multimappers=filter_multimappers,
         contig_map=contig_map if contig_map is not None else {},
     )
 

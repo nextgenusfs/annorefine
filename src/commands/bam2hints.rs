@@ -96,6 +96,14 @@ pub struct Bam2HintsCommand {
     #[arg(short = 'G', long = "maxgenelen", default_value = "400000")]
     pub max_gene_len: u32,
 
+    /// Minimum mapping quality (MAPQ) to accept an alignment (0 = no filtering)
+    #[arg(short = 'Q', long = "min-mapq", default_value = "0")]
+    pub min_mapping_quality: u8,
+
+    /// Filter out multi-mapping reads (reads with NH tag > 1)
+    #[arg(short = 'F', long = "filter-multimappers")]
+    pub filter_multimappers: bool,
+
     /// Number of threads to use for parallel processing
     #[arg(short = 't', long = "threads")]
     pub threads: Option<usize>,
@@ -223,6 +231,8 @@ impl Bam2HintsCommand {
             no_multiplicity: self.no_multiplicity,
             remove_redundant: self.remove_redundant,
             max_coverage: self.max_coverage,
+            min_mapping_quality: self.min_mapping_quality,
+            filter_multimappers: self.filter_multimappers,
             // Enable splice sites by default when not introns-only, unless explicitly disabled
             splice_sites_on: self.splice_sites_on || !self.introns_only,
             truncated_splice_sites: self.truncated_splice_sites,

@@ -166,6 +166,10 @@ pub struct PyBam2HintsConfig {
     #[pyo3(get, set)]
     pub max_gene_len: u32,
     #[pyo3(get, set)]
+    pub min_mapping_quality: u8,
+    #[pyo3(get, set)]
+    pub filter_multimappers: bool,
+    #[pyo3(get, set)]
     pub library_type: String,
     #[pyo3(get, set)]
     pub contig_map: std::collections::HashMap<String, String>,
@@ -193,6 +197,8 @@ impl PyBam2HintsConfig {
         truncated_splice_sites = false,
         score = 0.0,
         max_gene_len = 400000,
+        min_mapping_quality = 0,
+        filter_multimappers = false,
         contig_map = None
     ))]
     pub fn new(
@@ -213,6 +219,8 @@ impl PyBam2HintsConfig {
         truncated_splice_sites: bool,
         score: f64,
         max_gene_len: u32,
+        min_mapping_quality: u8,
+        filter_multimappers: bool,
         contig_map: Option<std::collections::HashMap<String, String>>,
     ) -> Self {
         Self {
@@ -232,6 +240,8 @@ impl PyBam2HintsConfig {
             truncated_splice_sites,
             score,
             max_gene_len,
+            min_mapping_quality,
+            filter_multimappers,
             library_type,
             contig_map: contig_map.unwrap_or_else(|| std::collections::HashMap::new()),
         }
@@ -287,6 +297,8 @@ impl From<PyBam2HintsConfig> for Bam2HintsConfig {
             truncated_splice_sites: py_config.truncated_splice_sites,
             score: py_config.score,
             max_gene_len: py_config.max_gene_len,
+            min_mapping_quality: py_config.min_mapping_quality,
+            filter_multimappers: py_config.filter_multimappers,
             library_type,
             strand_bias,
             contig_map: py_config.contig_map,
@@ -509,7 +521,7 @@ pub fn bam2hints_convert<'py>(
 
     // Use provided config or create default with required library_type
     let rust_config: Bam2HintsConfig = config
-        .unwrap_or_else(|| PyBam2HintsConfig::new(library_type.to_string(), 4, 14, 32, 350000, 8, 5, 10, "E".to_string(), false, false, false, 0, false, false, 0.0, 400000, None))
+        .unwrap_or_else(|| PyBam2HintsConfig::new(library_type.to_string(), 4, 14, 32, 350000, 8, 5, 10, "E".to_string(), false, false, false, 0, false, false, 0.0, 400000, 0, false, None))
         .into();
 
     // Set up threading - create a custom thread pool if specified
@@ -557,7 +569,7 @@ pub fn bam2hints_convert<'py>(
     result.set_item("alignments_with_hints", hints_count)?;
     result.set_item("total_hints_generated", total_hints)?;
     result.set_item("output_file", output_file)?;
-    result.set_item("config", config_clone.unwrap_or_else(|| PyBam2HintsConfig::new(library_type.to_string(), 4, 14, 32, 350000, 8, 5, 10, "E".to_string(), false, false, false, 0, false, false, 0.0, 400000, None)).into_py(py))?;
+    result.set_item("config", config_clone.unwrap_or_else(|| PyBam2HintsConfig::new(library_type.to_string(), 4, 14, 32, 350000, 8, 5, 10, "E".to_string(), false, false, false, 0, false, false, 0.0, 400000, 0, false, None)).into_py(py))?;
 
     Ok(result)
 }
@@ -594,9 +606,17 @@ pub fn test_interruptible_operation(py: Python, duration_seconds: u64) -> PyResu
 
 /// Join multiple hint files and merge identical hints
 ///
-/// This function reads hints from multiple GFF files, sorts them, and merges
-/// identical hints by summing their multiplicity values. This is equivalent to
-/// the Augustus `join_mult_hints.pl` script.
+/// This function reads hints from multiple GFF files, sorts them by genomic coordinates,
+/// and merges identical hints by summing their multiplicity values. This is similar to
+/// the Augustus `join_mult_hints.pl` script but sorts by coordinates rather than feature type.
+///
+/// Output is sorted by:
+/// 1. Chromosome (column 1)
+/// 2. Start position (column 4)
+/// 3. End position (column 5)
+/// 4. Feature type (column 3)
+/// 5. Strand (column 7)
+/// 6. Frame (column 8)
 ///
 /// Hints are considered identical if they have the same:
 /// - Chromosome (column 1)
@@ -673,8 +693,8 @@ pub fn join_hints<'py>(
         }
     }
 
-    // Sort hints by: chromosome, feature type, start, end, strand, frame
-    // This matches the sorting requirement of join_mult_hints.pl
+    // Sort hints by: chromosome, start, end, feature type, strand, frame
+    // This sorts by genomic coordinates first, then by feature type
     all_hints.sort_by(|a, b| {
         let fields_a: Vec<&str> = a.split('\t').collect();
         let fields_b: Vec<&str> = b.split('\t').collect();
@@ -683,9 +703,8 @@ pub fn join_hints<'py>(
             return std::cmp::Ordering::Equal;
         }
 
-        // Compare: chromosome (0), feature (2), start (3), end (4), strand (6), frame (7)
+        // Compare: chromosome (0), start (3), end (4), feature (2), strand (6), frame (7)
         fields_a[0].cmp(fields_b[0])
-            .then_with(|| fields_a[2].cmp(fields_b[2]))
             .then_with(|| {
                 let start_a = fields_a[3].parse::<u64>().unwrap_or(0);
                 let start_b = fields_b[3].parse::<u64>().unwrap_or(0);
@@ -696,6 +715,7 @@ pub fn join_hints<'py>(
                 let end_b = fields_b[4].parse::<u64>().unwrap_or(0);
                 end_a.cmp(&end_b)
             })
+            .then_with(|| fields_a[2].cmp(fields_b[2]))
             .then_with(|| fields_a[6].cmp(fields_b[6]))
             .then_with(|| fields_a[7].cmp(fields_b[7]))
     });

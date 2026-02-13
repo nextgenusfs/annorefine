@@ -38,6 +38,24 @@ impl Bam2HintsConverter {
 
     /// Process a single RNA-seq alignment and generate hints
     pub fn process_alignment(&mut self, alignment: &RnaSeqAlignment) -> Result<()> {
+        // Filter by mapping quality
+        if alignment.mapping_quality < self.config.min_mapping_quality {
+            debug!("Dropping alignment {} - mapping quality {} below threshold {}",
+                   alignment.read_name, alignment.mapping_quality, self.config.min_mapping_quality);
+            return Ok(());
+        }
+
+        // Filter multi-mapping reads if enabled
+        if self.config.filter_multimappers {
+            if let Some(num_hits) = alignment.num_hits {
+                if num_hits > 1 {
+                    debug!("Dropping alignment {} - multi-mapper with {} hits",
+                           alignment.read_name, num_hits);
+                    return Ok(());
+                }
+            }
+        }
+
         // Filter alignment based on library type and strand
         if !self.should_process_alignment(alignment) {
             return Ok(()); // Skip this alignment

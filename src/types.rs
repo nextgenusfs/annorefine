@@ -239,6 +239,7 @@ pub struct RnaSeqAlignment {
     pub strand: Strand,
     pub cigar: String,
     pub mapping_quality: u8,
+    pub num_hits: Option<u32>, // NH tag: number of reported alignments (None if not present)
     pub splice_junctions: Vec<SpliceJunction>,
     pub is_paired: bool,
     pub is_first_in_pair: bool,
@@ -634,6 +635,10 @@ pub struct Bam2HintsConfig {
     pub score: f64,
     /// Alignments that span more than this are ignored (default: 400000)
     pub max_gene_len: u32,
+    /// Minimum mapping quality (MAPQ) to accept an alignment (default: 0, no filtering)
+    pub min_mapping_quality: u8,
+    /// Filter out multi-mapping reads (reads with NH tag > 1) (default: false)
+    pub filter_multimappers: bool,
     /// Library type for strand-specific processing
     pub library_type: LibraryType,
     /// Detected strand bias from BAM file
@@ -661,6 +666,8 @@ impl Default for Bam2HintsConfig {
             truncated_splice_sites: false,
             score: 0.0,
             max_gene_len: 400000,
+            min_mapping_quality: 0,
+            filter_multimappers: false,
             library_type: LibraryType::Auto,
             strand_bias: StrandBias::Unstranded,
             contig_map: std::collections::HashMap::new(),

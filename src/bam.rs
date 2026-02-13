@@ -264,6 +264,19 @@ pub fn parse_bam_record(record: &bam::Record, header: &bam::HeaderView) -> Resul
 
     let mapping_quality = record.mapq();
 
+    // Extract NH tag (number of reported alignments) if present
+    let num_hits = record.aux(b"NH").ok().and_then(|aux| {
+        match aux {
+            rust_htslib::bam::record::Aux::U8(v) => Some(v as u32),
+            rust_htslib::bam::record::Aux::U16(v) => Some(v as u32),
+            rust_htslib::bam::record::Aux::U32(v) => Some(v),
+            rust_htslib::bam::record::Aux::I8(v) => Some(v as u32),
+            rust_htslib::bam::record::Aux::I16(v) => Some(v as u32),
+            rust_htslib::bam::record::Aux::I32(v) => Some(v as u32),
+            _ => None,
+        }
+    });
+
     // Extract paired-end information from BAM flags
     let is_paired = record.is_paired();
     let is_first_in_pair = record.is_first_in_template();
@@ -276,6 +289,7 @@ pub fn parse_bam_record(record: &bam::Record, header: &bam::HeaderView) -> Resul
         strand,
         cigar: cigar_string,
         mapping_quality,
+        num_hits,
         splice_junctions,
         is_paired,
         is_first_in_pair,
