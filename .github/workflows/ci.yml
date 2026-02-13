@@ -55,6 +55,9 @@ jobs:
       run: |
         brew install openssl pkg-config
 
+    - name: Check version sync
+      run: python sync_version.py --check
+
     - name: Check formatting
       run: cargo fmt -- --check
       continue-on-error: true
