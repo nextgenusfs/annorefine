@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "annorefine"
-version = "2026.2.9"
+version = "2026.2.20"
 description = "Genome annotation refinement using RNA-seq data"
 authors = [
     {name = "Jon Palmer", email = "nextgenusfs@gmail.com"},
