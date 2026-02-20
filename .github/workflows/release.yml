@@ -27,10 +27,10 @@ jobs:
           # Install dependencies needed for building in the manylinux container
           # - openssl-devel: for OpenSSL support
           # - perl-IPC-Cmd: for OpenSSL build scripts
-          # - clang: for bindgen (needed by hts-sys/rust-htslib)
-          yum install -y openssl-devel perl-IPC-Cmd clang
+          # - clang-devel: provides libclang for bindgen (needed by hts-sys/rust-htslib)
+          yum install -y openssl-devel perl-IPC-Cmd clang-devel
           # Find and set LIBCLANG_PATH for bindgen
-          export LIBCLANG_PATH=$(find /usr/lib* -name "libclang.so*" | head -1 | xargs dirname)
+          export LIBCLANG_PATH=$(find /usr/lib* -name "libclang.so*" 2>/dev/null | head -1 | xargs dirname)
           echo "LIBCLANG_PATH set to: $LIBCLANG_PATH"
           # Build the Rust binary inside the container
           python build.py || true
