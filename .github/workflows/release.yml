@@ -24,8 +24,13 @@ jobs:
         manylinux: auto
         args: --release --out dist --features python -i python${{ matrix.python-version }}
         before-script-linux: |
-          # Install OpenSSL development files in the manylinux container
-          yum install -y openssl-devel perl-IPC-Cmd
+          # Install dependencies needed for building in the manylinux container
+          # - openssl-devel: for OpenSSL support
+          # - perl-IPC-Cmd: for OpenSSL build scripts
+          # - clang: for bindgen (needed by hts-sys/rust-htslib)
+          yum install -y openssl-devel perl-IPC-Cmd clang
+          # Set LIBCLANG_PATH for bindgen
+          export LIBCLANG_PATH=/usr/lib64
           # Build the Rust binary inside the container
           python build.py || true
         rust-toolchain: stable
