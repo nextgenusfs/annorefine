@@ -21,7 +21,7 @@ jobs:
       uses: PyO3/maturin-action@v1
       with:
         target: x86_64
-        manylinux: auto
+        manylinux: 2_28
         args: --release --out dist --features python -i python${{ matrix.python-version }}
         before-script-linux: |
           # Install dependencies needed for building in the manylinux container
