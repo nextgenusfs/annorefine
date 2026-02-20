@@ -78,7 +78,15 @@ jobs:
       run: python build.py
 
     - name: Build wheel
-      run: maturin build --release --out dist --features python
+      run: |
+        if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+          # Use manylinux_2_17 for maximum compatibility (GLIBC 2.17 from 2012)
+          # This makes wheels compatible with Ubuntu 16.04+, Debian 9+, RHEL 7+, etc.
+          maturin build --release --out dist --features python --manylinux 2_17
+        else
+          # macOS doesn't use manylinux tags
+          maturin build --release --out dist --features python
+        fi
 
     - name: Upload wheels
       uses: actions/upload-artifact@v4
