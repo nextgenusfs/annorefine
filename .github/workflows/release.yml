@@ -29,8 +29,9 @@ jobs:
           # - perl-IPC-Cmd: for OpenSSL build scripts
           # - clang: for bindgen (needed by hts-sys/rust-htslib)
           yum install -y openssl-devel perl-IPC-Cmd clang
-          # Set LIBCLANG_PATH for bindgen
-          export LIBCLANG_PATH=/usr/lib64
+          # Find and set LIBCLANG_PATH for bindgen
+          export LIBCLANG_PATH=$(find /usr/lib* -name "libclang.so*" | head -1 | xargs dirname)
+          echo "LIBCLANG_PATH set to: $LIBCLANG_PATH"
           # Build the Rust binary inside the container
           python build.py || true
         rust-toolchain: stable
