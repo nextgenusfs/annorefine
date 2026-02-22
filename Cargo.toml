@@ -1,6 +1,6 @@
 [package]
 name = "annorefine"
-version = "2026.2.20"
+version = "2026.2.21"
 edition = "2021"
 description = "Genome annotation refinement toolkit using RNA-seq data"
 license = "MIT"
@@ -28,7 +28,8 @@ env_logger = "0.11.8"
 log = "0.4.28"
 rand = "0.8"
 rayon = "1.11.0"
-rust-htslib = "0.50.0"
+rust-htslib = "0.46"
+hts-sys = "=2.1.1"  # Pin to 2.1.1 for bioconda compatibility (CentOS 7 / GLIBC 2.17)
 serde = { version = "1.0.217", features = ["derive"] }
 thiserror = "1.0.69"
 fastrand = "2.0"
